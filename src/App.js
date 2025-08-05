@@ -17,23 +17,24 @@ export default function App() {
     const [quizId, setQuizId] = useState(null);
 
     useEffect(() => {
-        // --- FIX: This logic now correctly handles the path with the repository name ---
-        const path = window.location.pathname.replace(process.env.PUBLIC_URL, '');
-        const pathSegments = path.split('/');
-
-        if (pathSegments[1] === 'quiz' && pathSegments[2]) {
-            setQuizId(pathSegments[2]);
-            setPage('candidateLogin');
-        } else {
-            setPage('adminLogin');
-        }
-
         const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+            // This logic now correctly determines the page after checking auth state.
             if (currentUser && currentUser.email === 'quizegon2025@gmail.com') {
+                // If an admin is logged in, always show the dashboard.
                 setAdminUser(currentUser);
                 setPage('adminDashboard');
             } else {
+                // If no admin is logged in, determine the page based on the URL.
                 setAdminUser(null);
+                const path = window.location.pathname.replace(process.env.PUBLIC_URL, '');
+                const pathSegments = path.split('/');
+
+                if (pathSegments[1] === 'quiz' && pathSegments[2]) {
+                    setQuizId(pathSegments[2]);
+                    setPage('candidateLogin');
+                } else {
+                    setPage('adminLogin');
+                }
             }
             setIsAuthReady(true);
         });
