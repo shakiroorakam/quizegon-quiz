@@ -17,32 +17,32 @@ export default function App() {
     const [quizId, setQuizId] = useState(null);
 
     useEffect(() => {
-        // --- FIX: The entire routing logic is now inside the auth listener ---
-        // This prevents race conditions on page load.
+        // --- FIX: This hook now ONLY handles the initial routing based on the URL. ---
+        // It runs once when the app first loads.
+        const path = window.location.pathname.replace(process.env.PUBLIC_URL, '');
+        const pathSegments = path.split('/');
+
+        if (pathSegments[1] === 'quiz' && pathSegments[2]) {
+            setQuizId(pathSegments[2]);
+            setPage('candidateLogin');
+        } else {
+            setPage('adminLogin');
+        }
+
+        // --- FIX: The authentication listener is now separate. ---
+        // Its only job is to check for a logged-in admin and override the page if necessary.
         const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
             if (currentUser && currentUser.email === 'quizegon2025@gmail.com') {
-                // If a logged-in user is the admin, always show the dashboard.
                 setAdminUser(currentUser);
-                setPage('adminDashboard');
+                setPage('adminDashboard'); // Override the page if an admin is logged in.
             } else {
-                // If the user is not an admin (or is not logged in),
-                // THEN we check the URL to determine the correct page.
                 setAdminUser(null);
-                const path = window.location.pathname.replace(process.env.PUBLIC_URL, '');
-                const pathSegments = path.split('/');
-
-                if (pathSegments[1] === 'quiz' && pathSegments[2]) {
-                    setQuizId(pathSegments[2]);
-                    setPage('candidateLogin');
-                } else {
-                    setPage('adminLogin');
-                }
             }
             setIsAuthReady(true);
         });
 
         return () => unsubscribe();
-    }, []);
+    }, []); // This effect runs only once on mount.
 
     const handleCandidateLoginSuccess = (candidateId) => {
         setLoggedInCandidateId(candidateId);
@@ -53,7 +53,8 @@ export default function App() {
         if (adminUser) {
             await signOut(auth);
             setAdminUser(null);
-            window.location.href = process.env.PUBLIC_URL || '/';
+            // Use location.assign for a cleaner redirect that works better with GitHub Pages.
+            window.location.assign(process.env.PUBLIC_URL || '/');
         } else if (loggedInCandidateId) {
             setLoggedInCandidateId(null);
             window.location.reload();
