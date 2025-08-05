@@ -17,27 +17,26 @@ export default function App() {
     const [quizId, setQuizId] = useState(null);
 
     useEffect(() => {
-        // --- FIX: Determine the initial page from the URL first ---
-        const path = window.location.pathname.replace(process.env.PUBLIC_URL, '');
-        const pathSegments = path.split('/');
-
-        if (pathSegments[1] === 'quiz' && pathSegments[2]) {
-            setQuizId(pathSegments[2]);
-            setPage('candidateLogin');
-        } else {
-            setPage('adminLogin');
-        }
-
-        // --- FIX: The auth listener now only overrides the page if an admin is found ---
+        // --- FIX: The entire routing logic is now inside the auth listener ---
+        // This prevents race conditions on page load.
         const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
             if (currentUser && currentUser.email === 'quizegon2025@gmail.com') {
-                // If an admin is logged in, always show the dashboard.
+                // If a logged-in user is the admin, always show the dashboard.
                 setAdminUser(currentUser);
                 setPage('adminDashboard');
             } else {
-                // For any other case (no user, anonymous user, etc.),
-                // the page is already correctly set by the initial URL check.
+                // If the user is not an admin (or is not logged in),
+                // THEN we check the URL to determine the correct page.
                 setAdminUser(null);
+                const path = window.location.pathname.replace(process.env.PUBLIC_URL, '');
+                const pathSegments = path.split('/');
+
+                if (pathSegments[1] === 'quiz' && pathSegments[2]) {
+                    setQuizId(pathSegments[2]);
+                    setPage('candidateLogin');
+                } else {
+                    setPage('adminLogin');
+                }
             }
             setIsAuthReady(true);
         });
