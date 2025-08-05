@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { auth } from './firebase/config';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 
@@ -15,28 +15,41 @@ export default function App() {
     const [isAuthReady, setIsAuthReady] = useState(false);
     const [page, setPage] = useState('loading');
     const [quizId, setQuizId] = useState(null);
+    const initialCheckDone = useRef(false); // Ref to prevent re-running initial logic
 
     useEffect(() => {
-        // --- FIX: This hook now ONLY handles the initial routing based on the URL. ---
-        // It runs once when the app first loads.
-        const path = window.location.pathname.replace(process.env.PUBLIC_URL, '');
-        const pathSegments = path.split('/');
-
-        if (pathSegments[1] === 'quiz' && pathSegments[2]) {
-            setQuizId(pathSegments[2]);
-            setPage('candidateLogin');
-        } else {
-            setPage('adminLogin');
-        }
-
-        // --- FIX: The authentication listener is now separate. ---
-        // Its only job is to check for a logged-in admin and override the page if necessary.
         const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+            // After the first check, we only care about admin state changes.
+            if (initialCheckDone.current) {
+                if (currentUser && currentUser.email === 'quizegon2025@gmail.com') {
+                    setAdminUser(currentUser);
+                    setPage('adminDashboard');
+                } else {
+                    setAdminUser(null);
+                }
+                setIsAuthReady(true);
+                return;
+            }
+
+            // This block runs ONLY ONCE on the very first auth state check.
+            initialCheckDone.current = true;
+
             if (currentUser && currentUser.email === 'quizegon2025@gmail.com') {
+                // If the first check finds a logged-in admin, go to the dashboard.
                 setAdminUser(currentUser);
-                setPage('adminDashboard'); // Override the page if an admin is logged in.
+                setPage('adminDashboard');
             } else {
+                // Otherwise, determine the page from the URL.
                 setAdminUser(null);
+                const path = window.location.pathname.replace(process.env.PUBLIC_URL, '');
+                const pathSegments = path.split('/');
+
+                if (pathSegments[1] === 'quiz' && pathSegments[2]) {
+                    setQuizId(pathSegments[2]);
+                    setPage('candidateLogin');
+                } else {
+                    setPage('adminLogin');
+                }
             }
             setIsAuthReady(true);
         });
