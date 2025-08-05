@@ -1,0 +1,13 @@
+{
+  "files": {
+    "main.css": "/quizegon-quiz/static/css/main.428701a6.css",
+    "main.js": "/quizegon-quiz/static/js/main.e8cb1207.js",
+    "index.html": "/quizegon-quiz/index.html",
+    "main.428701a6.css.map": "/quizegon-quiz/static/css/main.428701a6.css.map",
+    "main.e8cb1207.js.map": "/quizegon-quiz/static/js/main.e8cb1207.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.428701a6.css",
+    "static/js/main.e8cb1207.js"
+  ]
+}
