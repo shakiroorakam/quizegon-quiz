@@ -1,13 +1,58 @@
+/* Import the Poppins font from Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
+
 body {
-  margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  background-color: #f8f9fa; /* A soft, light grey background */
+  font-family: 'Poppins', sans-serif; /* Set Poppins as the default font */
+  color: #212529;
 }
 
-code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
+/* A main container to center content and provide consistent padding */
+.app-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+}
+
+/* A more professional card style */
+.card {
+  border: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  border-radius: 0.75rem; /* Softer corners */
+}
+
+/* --- Component-Specific Enhancements --- */
+
+/* Navbar */
+.navbar.navbar-dark.bg-dark {
+    background-color: #fff !important;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    border-bottom: 1px solid #dee2e6;
+}
+.navbar-brand {
+    color: #212529;
+    font-weight: 600;
+}
+
+/* Tab Navigation */
+.nav-tabs {
+    border-bottom: 1px solid #dee2e6;
+}
+.nav-tabs .nav-link {
+    border: none;
+    color: #6c757d;
+    font-weight: 500;
+    padding: 0.75rem 1.25rem;
+    border-radius: 0.5rem 0.5rem 0 0;
+}
+.nav-tabs .nav-link.active {
+    color: #0d6efd;
+    background-color: #f8f9fa;
+    border-bottom: 3px solid #0d6efd;
+}
+
+/* Buttons */
+.btn {
+    border-radius: 0.5rem;
+    font-weight: 500;
 }
