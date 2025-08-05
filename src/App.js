@@ -17,9 +17,12 @@ export default function App() {
     const [quizId, setQuizId] = useState(null);
 
     useEffect(() => {
-        const path = window.location.pathname.split('/');
-        if (path[1] === 'quiz' && path[2]) {
-            setQuizId(path[2]);
+        // --- FIX: This logic now correctly handles the path with the repository name ---
+        const path = window.location.pathname.replace(process.env.PUBLIC_URL, '');
+        const pathSegments = path.split('/');
+
+        if (pathSegments[1] === 'quiz' && pathSegments[2]) {
+            setQuizId(pathSegments[2]);
             setPage('candidateLogin');
         } else {
             setPage('adminLogin');
@@ -47,7 +50,7 @@ export default function App() {
         if (adminUser) {
             await signOut(auth);
             setAdminUser(null);
-            window.location.href = '/';
+            window.location.href = process.env.PUBLIC_URL || '/';
         } else if (loggedInCandidateId) {
             setLoggedInCandidateId(null);
             window.location.reload();
