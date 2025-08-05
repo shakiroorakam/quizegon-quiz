@@ -89,10 +89,9 @@ export default function AdminDashboard() {
         }
     };
 
-    // --- FIX: This function now correctly builds the full URL for GitHub Pages ---
     const getQuizLink = (id) => {
         const baseUrl = window.location.origin + process.env.PUBLIC_URL;
-        return `${baseUrl}/quiz/${id}`;
+        return `${baseUrl}/#/quiz/${id}`;
     };
 
     const copyToClipboard = (id) => {
@@ -150,7 +149,6 @@ export default function AdminDashboard() {
                                 {quiz.createdAt && <p className="card-subtitle mb-2 text-muted small">Created: {new Date(quiz.createdAt.seconds * 1000).toLocaleDateString()}</p>}
                                 <div className="mt-auto pt-3 d-flex justify-content-between align-items-center">
                                     <button className="btn btn-primary" onClick={() => setSelectedQuiz(quiz)}>Manage</button>
-                                    {/* --- FIX: Uses the new getQuizLink function --- */}
                                     <button className="btn btn-outline-secondary btn-sm" onClick={() => copyToClipboard(quiz.id)}>Copy Link</button>
                                 </div>
                             </div>
