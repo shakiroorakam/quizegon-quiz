@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../firebase/config';
-import { query, collection, where, getDocs, doc, getDoc } from 'firebase/firestore';
+import { query, collection, where, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
 
 export default function CandidateLogin({ quizId, onLoginSuccess }) {
     const [phone, setPhone] = useState('');
@@ -34,29 +34,16 @@ export default function CandidateLogin({ quizId, onLoginSuccess }) {
             return;
         }
 
-        // --- Quiz Status & Schedule Check ---
         const now = new Date();
-        if (quiz.status === 'pending') {
+        if (quiz.status === 'pending' || (quiz.status === 'scheduled' && now < quiz.startTime.toDate())) {
             setError('The quiz has not been started yet.');
             setIsLoading(false);
             return;
         }
-        if (quiz.status === 'ended') {
+        if (quiz.status === 'ended' || (quiz.status === 'scheduled' && now > quiz.endTime.toDate())) {
             setError('This quiz has ended.');
             setIsLoading(false);
             return;
-        }
-        if (quiz.status === 'scheduled') {
-            if (now < quiz.startTime.toDate()) {
-                setError(`This quiz is scheduled to start on ${quiz.startTime.toDate().toLocaleString()}.`);
-                setIsLoading(false);
-                return;
-            }
-            if (now > quiz.endTime.toDate()) {
-                setError('This quiz has ended.');
-                setIsLoading(false);
-                return;
-            }
         }
         
         try {
@@ -71,6 +58,9 @@ export default function CandidateLogin({ quizId, onLoginSuccess }) {
 
             const resultDoc = await getDoc(doc(db, 'quizzes', quizId, 'results', candidateDoc.id));
             if (resultDoc.exists()) throw new Error('You have already attended this quiz.');
+
+            // --- FIX: Update the candidate's status to 'attending' ---
+            await setDoc(doc(db, 'quizzes', quizId, 'candidates', candidateDoc.id), { status: 'attending' }, { merge: true });
 
             onLoginSuccess(candidateDoc.id);
         } catch (err) {
