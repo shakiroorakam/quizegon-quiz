@@ -1,7 +1,7 @@
-import React, {useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { db } from '../firebase/config';
 import { collection, addDoc, onSnapshot, doc, deleteDoc, getDocs, setDoc, Timestamp } from 'firebase/firestore';
-import { utils, writeFile } from 'xlsx';
+import { utils, writeFile } from 'xlsx'; // Import xlsx utilities
 import Modal from '../components/common/Modal';
 import AddCandidateModal from '../components/admin/AddCandidateModal';
 import QuestionManagement from '../components/admin/QuestionManagement';
@@ -66,29 +66,6 @@ export default function AdminDashboard() {
         return () => { unsubCandidates(); unsubFolders(); unsubResults(); };
     }, [selectedQuiz]);
 
-    const handleDownloadResults = () => {
-        const dataForExcel = results.map(res => {
-            let timeTaken = 'N/A';
-            if (res.startTime && res.submittedAt) {
-                const diff = res.submittedAt.toDate() - res.startTime.toDate();
-                const minutes = Math.floor(diff / 60000);
-                const seconds = ((diff % 60000) / 1000).toFixed(0);
-                timeTaken = `${minutes}m ${seconds}s`;
-            }
-            return {
-                'Name': res.candidateInfo.name || 'Unknown',
-                'Mobile Number': res.candidateInfo.mobile || 'N/A',
-                'Score': `${res.score} / ${res.totalQuestions}`,
-                'Time Taken': timeTaken,
-            };
-        });
-
-        const worksheet = utils.json_to_sheet(dataForExcel);
-        const workbook = utils.book_new();
-        utils.book_append_sheet(workbook, worksheet, "Results");
-        writeFile(workbook, `${selectedQuiz.name}_Results.xlsx`);
-    };
-
     const handleCreateQuiz = async () => {
         if (!newQuizName.trim()) return;
         await addDoc(collection(db, 'quizzes'), { name: newQuizName, createdAt: new Date(), status: 'pending' });
@@ -131,6 +108,41 @@ export default function AdminDashboard() {
         if (window.confirm("Are you sure you want to delete this quiz? This action is irreversible and will delete all associated data.")) {
             await deleteDoc(doc(db, 'quizzes', quizId));
         }
+    };
+
+    const getQuizLink = (id) => {
+        const baseUrl = window.location.origin + process.env.PUBLIC_URL;
+        return `${baseUrl}/#/quiz/${id}`;
+    };
+
+    const copyToClipboard = (id) => {
+        navigator.clipboard.writeText(getQuizLink(id)).then(() => {
+            alert('Quiz link copied!');
+        });
+    };
+
+    // --- FIX: Added the missing handleDownloadResults function ---
+    const handleDownloadResults = () => {
+        const dataForExcel = results.map(res => {
+            let timeTaken = 'N/A';
+            if (res.startTime && res.submittedAt) {
+                const diff = res.submittedAt.toDate() - res.startTime.toDate();
+                const minutes = Math.floor(diff / 60000);
+                const seconds = ((diff % 60000) / 1000).toFixed(0);
+                timeTaken = `${minutes}m ${seconds}s`;
+            }
+            return {
+                'Name': res.candidateInfo.name || 'Unknown',
+                'Mobile Number': res.candidateInfo.mobile || 'N/A',
+                'Score': `${res.score} / ${res.totalQuestions}`,
+                'Time Taken': timeTaken,
+            };
+        });
+
+        const worksheet = utils.json_to_sheet(dataForExcel);
+        const workbook = utils.book_new();
+        utils.book_append_sheet(workbook, worksheet, "Results");
+        writeFile(workbook, `${selectedQuiz.name}_Results.xlsx`);
     };
 
     const openEditModal = (candidate) => { setCandidateToEdit(candidate); setShowEditCandidateModal(true); };
@@ -193,40 +205,7 @@ export default function AdminDashboard() {
                 )}
                 {managementView === 'candidates' && (<div className="card"><div className="card-header d-flex justify-content-between align-items-center"><h5>Candidate List ({filteredCandidates.length})</h5><button className="btn btn-primary" onClick={() => setShowCandidateModal(true)}>+ Add Candidates</button></div><div className="p-3 border-bottom"><input type="text" className="form-control" placeholder="Search by name or mobile..." value={candidateSearch} onChange={e => setCandidateSearch(e.target.value)} /></div><div className="table-responsive"><table className="table table-striped table-hover mb-0"><thead><tr><th>Name</th><th>Mobile</th><th>DOB</th><th>Status</th><th>Actions</th></tr></thead><tbody>{filteredCandidates.map(c => (<tr key={c.id}><td>{c.name}</td><td>{c.mobile}</td><td>{c.dob}</td><td>{results.some(r => r.id === c.id) ? <span className="badge bg-success">Attended</span> : <span className="badge bg-secondary">Not Attended</span>}</td><td><button className="btn btn-sm btn-outline-primary me-2" onClick={() => openEditModal(c)}>Edit</button><button className="btn btn-sm btn-outline-danger" onClick={() => handleDeleteCandidate(c.id)}>Delete</button></td></tr>))}</tbody></table></div></div>)}
                 {managementView === 'questions' && (<div>{selectedFolder ? <QuestionManagement quizId={selectedQuiz.id} folder={selectedFolder} onBack={() => setSelectedFolder(null)} /> : (<div className="card"><div className="card-header"><h5>Question Folders</h5></div>{foldersLoading ? <div className="card-body text-center"><p>Loading folders...</p></div> : (<div className="list-group list-group-flush">{folders.map(folder => (<div key={folder.id} className="list-group-item d-flex justify-content-between align-items-center"><span>{folder.name} <span className={`badge ${folder.type === 'fixed' ? 'bg-info' : 'bg-secondary'}`}>{folder.type}</span></span><button className="btn btn-secondary btn-sm" onClick={() => setSelectedFolder(folder)}>View Questions</button></div>))}</div>)}</div>)}</div>)}
-                {managementView === 'results' && (
-                    <div className="card">
-                        <div className="card-header d-flex justify-content-between align-items-center">
-                            <h5>Quiz Results ({results.length} submissions)</h5>
-                            <button className="btn btn-success" onClick={handleDownloadResults}>Download Results</button>
-                        </div>
-                        <div className="table-responsive">
-                            <table className="table table-striped table-hover mb-0">
-                                <thead>
-                                    <tr>
-                                        <th>Rank</th>
-                                        <th>Candidate Name</th>
-                                        <th>Score</th>
-                                        <th>Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {results.map((res, index) => (
-                                        <tr key={res.id}>
-                                            <td>{index + 1}</td>
-                                            <td>{res.candidateInfo.name || 'Unknown'}</td>
-                                            <td>{res.score} / {res.totalQuestions}</td>
-                                            <td>
-                                                <button className="btn btn-sm btn-outline-info" onClick={() => openViewAnswersModal(res)}>
-                                                    View Answers
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                )}
+                {managementView === 'results' && (<div className="card"><div className="card-header d-flex justify-content-between align-items-center"><h5>Quiz Results ({results.length} submissions)</h5><button className="btn btn-success" onClick={handleDownloadResults}>Download Results</button></div><div className="table-responsive"><table className="table table-striped table-hover mb-0"><thead><tr><th>Rank</th><th>Candidate Name</th><th>Score</th><th>Actions</th></tr></thead><tbody>{results.map((res, index) => (<tr key={res.id}><td>{index + 1}</td><td>{res.candidateInfo.name || 'Unknown'}</td><td>{res.score} / {res.totalQuestions}</td><td><button className="btn btn-sm btn-outline-info" onClick={() => openViewAnswersModal(res)}>View Answers</button></td></tr>))}</tbody></table></div></div>)}
                 {showCandidateModal && <AddCandidateModal quizId={selectedQuiz.id} onClose={() => setShowCandidateModal(false)} />}
                 {showEditCandidateModal && <EditCandidateModal quizId={selectedQuiz.id} candidate={candidateToEdit} onClose={() => setShowEditCandidateModal(false)} />}
                 {showViewAnswersModal && <ViewAnswersModal quizId={selectedQuiz.id} result={selectedResultForView} onClose={() => setShowViewAnswersModal(false)} />}
@@ -242,15 +221,11 @@ export default function AdminDashboard() {
                     <div key={quiz.id} className="col-md-6 col-lg-4">
                         <div className="card h-100">
                             <div className="card-body d-flex flex-column">
-                                <div className="d-flex justify-content-between"><h5 className="card-title">{quiz.name}</h5><div className="dropdown"><button className="btn btn-sm btn-light" type="button" data-bs-toggle="dropdown" aria-expanded="false">&#8942;</button>
-                                <ul className="dropdown-menu dropdown-menu-end">
-                                    <li><button className="dropdown-item" onClick={() => openEditQuizModal(quiz)}>Edit</button></li>
-                                    <li><button className="dropdown-item text-danger" onClick={() => handleDeleteQuiz(quiz.id)}>Delete</button></li>
-                                </ul></div></div>
+                                <div className="d-flex justify-content-between"><h5 className="card-title">{quiz.name}</h5><div className="dropdown"><button className="btn btn-sm btn-light" type="button" data-bs-toggle="dropdown" aria-expanded="false">&#8942;</button><ul className="dropdown-menu dropdown-menu-end"><li><button className="dropdown-item" onClick={() => openEditQuizModal(quiz)}>Edit</button></li><li><button className="dropdown-item text-danger" onClick={() => handleDeleteQuiz(quiz.id)}>Delete</button></li></ul></div></div>
                                 {quiz.createdAt && <p className="card-subtitle mb-2 text-muted small">Created: {new Date(quiz.createdAt.seconds * 1000).toLocaleDateString()}</p>}
                                 <div className="mt-auto pt-3 d-flex justify-content-between align-items-center">
                                     <button className="btn btn-primary" onClick={() => setSelectedQuiz(quiz)}>Manage</button>
-                                    <button className="btn btn-outline-secondary btn-sm" onClick={() => navigator.clipboard.writeText(`${window.location.origin}/#/quiz/${quiz.id}`).then(() => alert('Link copied!'))}>Copy Link</button>
+                                    <button className="btn btn-outline-secondary btn-sm" onClick={() => copyToClipboard(quiz.id)}>Copy Link</button>
                                 </div>
                             </div>
                         </div>
@@ -258,12 +233,7 @@ export default function AdminDashboard() {
                 ))}
             </div>
             {showCreateQuizModal && <Modal onClose={() => setShowCreateQuizModal(false)} title="Create New Quiz"><input type="text" className="form-control" value={newQuizName} onChange={(e) => setNewQuizName(e.target.value)} /><button className="btn btn-primary mt-3" onClick={handleCreateQuiz}>Create</button></Modal>}
-            {showEditQuizModal && (
-                <Modal onClose={() => setShowEditQuizModal(false)} title="Edit Quiz Name">
-                    <input type="text" className="form-control" value={editedQuizName} onChange={(e) => setEditedQuizName(e.target.value)} />
-                    <button className="btn btn-primary mt-3" onClick={handleUpdateQuiz}>Update</button>
-                </Modal>
-            )}
+            {showEditQuizModal && (<Modal onClose={() => setShowEditQuizModal(false)} title="Edit Quiz Name"><input type="text" className="form-control" value={editedQuizName} onChange={(e) => setEditedQuizName(e.target.value)} /><button className="btn btn-primary mt-3" onClick={handleUpdateQuiz}>Update</button></Modal>)}
         </div>
     );
 }
