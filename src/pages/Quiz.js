@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { db } from '../firebase/config';
-import { collection, getDocs, doc, setDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, setDoc, Timestamp } from 'firebase/firestore';
 import Timer from '../components/quiz/Timer';
 import QuestionGrid from '../components/quiz/QuestionGrid';
 import Loading from '../components/common/Loading';
@@ -24,11 +24,7 @@ export default function Quiz({ quizId, candidateId, onFinish }) {
     const [answers, setAnswers] = useState({});
     const [isLoading, setIsLoading] = useState(true);
     const [showSuccessModal, setShowSuccessModal] = useState(false);
-    
-    // --- ANTI-CHEATING STATES ---
-    const [showWarningModal, setShowWarningModal] = useState(false);
-    const [warningMessage, setWarningMessage] = useState('');
-    const tabSwitchCount = useRef(0);
+    const [quizStartTime, setQuizStartTime] = useState(null); // State to record start time
     
     const onFinishRef = useRef(onFinish);
     useEffect(() => {
@@ -51,51 +47,15 @@ export default function Quiz({ quizId, candidateId, onFinish }) {
                 answers,
                 score,
                 totalQuestions: questions.length,
-                submittedAt: new Date()
+                startTime: Timestamp.fromDate(quizStartTime), // Save the start time
+                submittedAt: Timestamp.now() // Save the submission time
             });
             setShowSuccessModal(true);
         } catch (error) {
             console.error("Error submitting quiz results:", error);
             alert("There was an error submitting your quiz.");
         }
-    }, [quizId, candidateId, questions, answers]);
-
-    // --- ANTI-CHEATING FEATURES ---
-    useEffect(() => {
-        const handleVisibilityChange = () => {
-            if (document.hidden) {
-                tabSwitchCount.current += 1;
-                if (tabSwitchCount.current === 1) {
-                    // First offense: show a warning
-                    setWarningMessage('You have switched tabs. This is the first and final warning. Switching tabs again will result in automatic submission of your quiz.');
-                    setShowWarningModal(true);
-                } else if (tabSwitchCount.current >= 2) {
-                    // Second offense: auto-submit the quiz
-                    handleSubmitQuiz();
-                }
-            }
-        };
-
-        const preventAction = (e) => {
-            e.preventDefault();
-            setWarningMessage('This action is disabled during the quiz.');
-            setShowWarningModal(true);
-        };
-
-        // Add event listeners when the component mounts
-        document.addEventListener('visibilitychange', handleVisibilityChange);
-        document.addEventListener('contextmenu', preventAction); // Disable right-click
-        document.addEventListener('copy', preventAction); // Disable copy
-        document.addEventListener('paste', preventAction); // Disable paste
-
-        // Cleanup function to remove event listeners when the component unmounts
-        return () => {
-            document.removeEventListener('visibilitychange', handleVisibilityChange);
-            document.removeEventListener('contextmenu', preventAction);
-            document.removeEventListener('copy', preventAction);
-            document.removeEventListener('paste', preventAction);
-        };
-    }, [handleSubmitQuiz]);
+    }, [quizId, candidateId, questions, answers, quizStartTime]);
 
     useEffect(() => {
         const fetchQuestions = async () => {
@@ -127,6 +87,7 @@ export default function Quiz({ quizId, candidateId, onFinish }) {
                 const finalQuestions = shuffleArray(combinedQuestions);
 
                 setQuestions(finalQuestions);
+                setQuizStartTime(new Date()); // Record the start time when questions are loaded
             } catch (error) {
                 console.error("Error fetching questions:", error);
                 alert("Could not load the quiz questions. Please try again later.");
@@ -173,15 +134,6 @@ export default function Quiz({ quizId, candidateId, onFinish }) {
                     <p>Your quiz has been submitted successfully.</p>
                     <button className="btn btn-primary" onClick={() => onFinishRef.current()}>
                         OK
-                    </button>
-                </Modal>
-            )}
-
-            {showWarningModal && (
-                <Modal onClose={() => setShowWarningModal(false)} title="Warning">
-                    <p>{warningMessage}</p>
-                    <button className="btn btn-warning" onClick={() => setShowWarningModal(false)}>
-                        I Understand
                     </button>
                 </Modal>
             )}
