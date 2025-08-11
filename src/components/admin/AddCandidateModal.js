@@ -35,8 +35,21 @@ export default function AddCandidateModal({ quizId, onClose }) {
                 let candidatesAdded = 0;
                 for (const candidate of jsonData) {
                     if (candidate.name && candidate.mobile && candidate.dob) {
-                        await addDoc(candidatesCollectionRef, { ...candidate });
-                        candidatesAdded++;
+                        // --- FIX: Ensure mobile number is always a string ---
+                        const mobileStr = String(candidate.mobile).trim();
+
+                        // --- FIX: Convert Excel date serial number to YYYY-MM-DD format ---
+                        let dobStr = candidate.dob;
+                        if (typeof dobStr === 'number') {
+                            // This formula converts Excel's numeric date format to a standard date
+                            const date = new Date(Math.round((dobStr - 25569) * 86400 * 1000));
+                            dobStr = date.toISOString().split('T')[0];
+                        }
+
+                        if (/^\d{10}$/.test(mobileStr)) {
+                            await addDoc(candidatesCollectionRef, { name: candidate.name, mobile: mobileStr, dob: dobStr });
+                            candidatesAdded++;
+                        }
                     }
                 }
                 alert(`${candidatesAdded} candidates imported successfully!`);
