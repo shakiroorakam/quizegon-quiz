@@ -1,263 +1,1030 @@
-import React, { useState, useEffect } from 'react';
-import { db } from '../firebase/config';
-import { collection, addDoc, onSnapshot, doc, deleteDoc, getDocs, setDoc, Timestamp } from 'firebase/firestore';
-import { utils, writeFile } from 'xlsx';
-import Modal from '../components/common/Modal';
-import AddCandidateModal from '../components/admin/AddCandidateModal';
-import QuestionManagement from '../components/admin/QuestionManagement';
-import EditCandidateModal from '../components/admin/EditCandidateModal';
-import ViewAnswersModal from '../components/admin/ViewAnswersModal';
+import React, { useState, useEffect, useCallback } from "react";
+import { db, auth } from "../firebase/config";
+import {
+  collection,
+  addDoc,
+  onSnapshot,
+  doc,
+  getDoc,
+  updateDoc,
+  deleteDoc,
+  writeBatch,
+  serverTimestamp,
+} from "firebase/firestore";
+import AddCandidateModal from "../components/admin/AddCandidateModal";
+import EditCandidateModal from "../components/admin/EditCandidateModal";
+import QuestionManagement from "../components/admin/QuestionManagement";
+import ViewAnswersModal from "../components/admin/ViewAnswersModal";
+import { signOut } from "firebase/auth";
+import { utils, writeFile } from "xlsx";
 
-export default function AdminDashboard() {
-    const [quizzes, setQuizzes] = useState([]);
-    const [selectedQuiz, setSelectedQuiz] = useState(null);
-    const [managementView, setManagementView] = useState('home');
-    
-    const [showCreateQuizModal, setShowCreateQuizModal] = useState(false);
-    const [showEditQuizModal, setShowEditQuizModal] = useState(false);
-    const [showCandidateModal, setShowCandidateModal] = useState(false);
-    const [showEditCandidateModal, setShowEditCandidateModal] = useState(false);
-    const [showViewAnswersModal, setShowViewAnswersModal] = useState(false);
-    
-    const [quizToEdit, setQuizToEdit] = useState(null);
-    const [editedQuizName, setEditedQuizName] = useState('');
-    const [candidateToEdit, setCandidateToEdit] = useState(null);
-    const [selectedFolder, setSelectedFolder] = useState(null);
-    const [selectedResultForView, setSelectedResultForView] = useState(null);
-    
-    const [newQuizName, setNewQuizName] = useState('');
-    const [candidates, setCandidates] = useState([]);
-    const [folders, setFolders] = useState([]);
-    const [foldersLoading, setFoldersLoading] = useState(true);
-    const [results, setResults] = useState([]);
-    const [candidateSearch, setCandidateSearch] = useState('');
+const AdminDashboard = () => {
+  const [quizzes, setQuizzes] = useState([]);
+  const [selectedQuiz, setSelectedQuiz] = useState(null);
+  const [isCreateModalOpen, setCreateModalOpen] = useState(false);
 
-    const [startTime, setStartTime] = useState('');
-    const [endTime, setEndTime] = useState('');
+  // Create Modal State
+  const [newQuizName, setNewQuizName] = useState("");
+  const [newQuizDuration, setNewQuizDuration] = useState(15);
+  const [newQuizType, setNewQuizType] = useState("Multiple Choice");
+  const [includePool, setIncludePool] = useState(true);
+  const [newPoolCount, setNewPoolCount] = useState(20);
+  const [newFixedCount, setNewFixedCount] = useState(10);
 
-    useEffect(() => {
-        const unsub = onSnapshot(collection(db, 'quizzes'), snap => setQuizzes(snap.docs.map(doc => ({ id: doc.id, ...doc.data() }))));
-        return () => unsub();
-    }, []);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [managementTab, setManagementTab] = useState("home");
 
-    useEffect(() => {
-        if (!selectedQuiz) return;
+  // Sub-component states
+  const [candidates, setCandidates] = useState([]);
+  const [results, setResults] = useState([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [isAddCandidateModalOpen, setAddCandidateModalOpen] = useState(false);
+  const [isEditCandidateModalOpen, setEditCandidateModalOpen] = useState(false);
+  const [candidateToEdit, setCandidateToEdit] = useState(null);
+  const [isViewAnswersModalOpen, setViewAnswersModalOpen] = useState(false);
+  const [answersToView, setAnswersToView] = useState(null);
+  const [homeStats, setHomeStats] = useState({
+    registered: 0,
+    submissions: 0,
+    attendance: 0,
+  });
+  const [isEditQuizModalOpen, setEditQuizModalOpen] = useState(false);
+  const [quizToEdit, setQuizToEdit] = useState(null);
+  const [startTime, setStartTime] = useState("");
+  const [endTime, setEndTime] = useState("");
 
-        const candidatesRef = collection(db, 'quizzes', selectedQuiz.id, 'candidates');
-        const foldersRef = collection(db, 'quizzes', selectedQuiz.id, 'questionFolders');
-        const resultsRef = collection(db, 'quizzes', selectedQuiz.id, 'results');
-        
-        // --- FIX: This listener is now the single source of truth for candidate data ---
-        const unsubCandidates = onSnapshot(candidatesRef, snap => {
-            setCandidates(snap.docs.map(d => ({id: d.id, ...d.data()})));
-        });
-
-        // --- FIX: This listener now only fetches results and combines them with the live candidate data ---
-        const unsubResults = onSnapshot(resultsRef, (resultsSnap) => {
-            const resultsData = resultsSnap.docs.map(d => ({id: d.id, ...d.data()}));
-            // We use a function form of setCandidates to get the most recent state
-            setCandidates(currentCandidates => {
-                const candidatesMap = new Map(currentCandidates.map(c => [c.id, c]));
-                const detailedResults = resultsData.map(result => ({
-                    ...result,
-                    candidateInfo: candidatesMap.get(result.id) || {}
-                }));
-                detailedResults.sort((a, b) => b.score - a.score);
-                setResults(detailedResults);
-                return currentCandidates; // Return the unchanged candidates list
-            });
-        });
-        
-        const unsubFolders = onSnapshot(foldersRef, async (snap) => {
-            if (snap.empty) {
-                await addDoc(foldersRef, { name: 'Pool Questions', type: 'pool' });
-                await addDoc(foldersRef, { name: 'Fixed Questions', type: 'fixed' });
-            } else {
-                setFolders(snap.docs.map(d => ({id: d.id, ...d.data()})));
-            }
-            setFoldersLoading(false);
-        });
-
-        return () => { unsubCandidates(); unsubFolders(); unsubResults(); };
-    }, [selectedQuiz]);
-
-    const handleCreateQuiz = async () => {
-        if (!newQuizName.trim()) return;
-        await addDoc(collection(db, 'quizzes'), { name: newQuizName, createdAt: new Date(), status: 'pending' });
-        setShowCreateQuizModal(false);
-        setNewQuizName('');
-    };
-
-    const handleUpdateQuizStatus = async (status) => {
-        const quizDocRef = doc(db, 'quizzes', selectedQuiz.id);
-        await setDoc(quizDocRef, { status, startTime: null, endTime: null }, { merge: true });
-        setSelectedQuiz({...selectedQuiz, status, startTime: null, endTime: null});
-    };
-
-    const handleScheduleQuiz = async () => {
-        if (!startTime || !endTime) return alert('Please set both a start and end time.');
-        const quizDocRef = doc(db, 'quizzes', selectedQuiz.id);
-        await setDoc(quizDocRef, {
-            startTime: Timestamp.fromDate(new Date(startTime)),
-            endTime: Timestamp.fromDate(new Date(endTime)),
-            status: 'scheduled'
-        }, { merge: true });
-        alert('Quiz has been scheduled.');
-    };
-
-    const openEditQuizModal = (quiz) => {
-        setQuizToEdit(quiz);
-        setEditedQuizName(quiz.name);
-        setShowEditQuizModal(true);
-    };
-
-    const handleUpdateQuiz = async () => {
-        if (!editedQuizName.trim()) return alert('Quiz name cannot be empty.');
-        const quizDocRef = doc(db, 'quizzes', quizToEdit.id);
-        await setDoc(quizDocRef, { name: editedQuizName }, { merge: true });
-        setShowEditQuizModal(false);
-        setQuizToEdit(null);
-    };
-
-    const handleDeleteQuiz = async (quizId) => {
-        if (window.confirm("Are you sure you want to delete this quiz? This action is irreversible and will delete all associated data.")) {
-            await deleteDoc(doc(db, 'quizzes', quizId));
-        }
-    };
-
-    const getQuizLink = (id) => {
-        const baseUrl = window.location.origin + process.env.PUBLIC_URL;
-        return `${baseUrl}/#/quiz/${id}`;
-    };
-
-    const copyToClipboard = (id) => {
-        navigator.clipboard.writeText(getQuizLink(id)).then(() => {
-            alert('Quiz link copied!');
-        });
-    };
-
-    const handleDownloadResults = () => {
-        const dataForExcel = results.map(res => {
-            let timeTaken = 'N/A';
-            if (res.startTime && res.submittedAt) {
-                const diff = res.submittedAt.toDate() - res.startTime.toDate();
-                const minutes = Math.floor(diff / 60000);
-                const seconds = ((diff % 60000) / 1000).toFixed(0);
-                timeTaken = `${minutes}m ${seconds}s`;
-            }
-            return {
-                'Name': res.candidateInfo.name || 'Unknown',
-                'Mobile Number': res.candidateInfo.mobile || 'N/A',
-                'Score': `${res.score} / ${res.totalQuestions}`,
-                'Time Taken': timeTaken,
-            };
-        });
-
-        const worksheet = utils.json_to_sheet(dataForExcel);
-        const workbook = utils.book_new();
-        utils.book_append_sheet(workbook, worksheet, "Results");
-        writeFile(workbook, `${selectedQuiz.name}_Results.xlsx`);
-    };
-
-    const openEditCandidateModal = (candidate) => { setCandidateToEdit(candidate); setShowEditCandidateModal(true); };
-    const openViewAnswersModal = (result) => { setSelectedResultForView(result); setShowViewAnswersModal(true); };
-    const handleDeleteCandidate = async (candidateId) => {
-        if (window.confirm("Are you sure? This will also delete their result.")) {
-            await deleteDoc(doc(db, 'quizzes', selectedQuiz.id, 'candidates', candidateId));
-            await deleteDoc(doc(db, 'quizzes', selectedQuiz.id, 'results', candidateId));
-        }
-    };
-    
-    const filteredCandidates = candidates.filter(c => c.name.toLowerCase().includes(candidateSearch.toLowerCase()) || c.mobile.includes(candidateSearch));
-    
-    const getCandidateStatus = (candidate) => {
-        if (results.some(r => r.id === candidate.id)) {
-            return <span className="badge bg-success">Attended</span>;
-        }
-        if (candidate.status === 'attending') {
-            return <span className="badge bg-primary">Attending</span>;
-        }
-        return <span className="badge bg-secondary">Not Attended</span>;
-    };
-
-    if (selectedQuiz) {
-        const attendanceRate = candidates.length > 0 ? ((results.length / candidates.length) * 100).toFixed(1) : 0;
-        return (
-            <div>
-                <button className="btn btn-outline-secondary mb-4 d-flex align-items-center" onClick={() => { setSelectedQuiz(null); setManagementView('home'); }}>
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" className="bi bi-arrow-left me-2" viewBox="0 0 16 16"><path fillRule="evenodd" d="M15 8a.5.5 0 0 0-.5-.5H2.707l3.147-3.146a.5.5 0 1 0-.708-.708l-4 4a.5.5 0 0 0 0 .708l4 4a.5.5 0 0 0 .708-.708L2.707 8.5H14.5A.5.5 0 0 0 15 8z"/></svg>
-                    Back to All Quizzes
-                </button>
-                <h2 className="mb-3">Manage: {selectedQuiz.name}</h2>
-                <ul className="nav nav-tabs mb-4">
-                    <li className="nav-item"><button className={`nav-link ${managementView === 'home' ? 'active' : ''}`} onClick={() => setManagementView('home')}>Home</button></li>
-                    <li className="nav-item"><button className={`nav-link ${managementView === 'candidates' ? 'active' : ''}`} onClick={() => setManagementView('candidates')}>Candidates</button></li>
-                    <li className="nav-item"><button className={`nav-link ${managementView === 'questions' ? 'active' : ''}`} onClick={() => setManagementView('questions')}>Questions</button></li>
-                    <li className="nav-item"><button className={`nav-link ${managementView === 'results' ? 'active' : ''}`} onClick={() => setManagementView('results')}>Result</button></li>
-                </ul>
-
-                {managementView === 'home' && (
-                    <div>
-                        <div className="card mb-4">
-                            <div className="card-header"><h5>Quiz Controls</h5></div>
-                            <div className="card-body">
-                                <div className="row">
-                                    <div className="col-md-6">
-                                        <h6>Manual Control</h6>
-                                        <p>Current Status: <span className="fw-bold">{selectedQuiz.status || 'pending'}</span></p>
-                                        {selectedQuiz.status === 'active' ? (
-                                            <button className="btn btn-danger" onClick={() => handleUpdateQuizStatus('ended')}>End Quiz Now</button>
-                                        ) : (
-                                            <button className="btn btn-success" onClick={() => handleUpdateQuizStatus('active')}>Start Quiz Now</button>
-                                        )}
-                                    </div>
-                                    <div className="col-md-6">
-                                        <h6>Schedule Quiz</h6>
-                                        <div className="mb-2"><label className="form-label">Start Time</label><input type="datetime-local" className="form-control" value={startTime} onChange={e => setStartTime(e.target.value)}/></div>
-                                        <div className="mb-2"><label className="form-label">End Time</label><input type="datetime-local" className="form-control" value={endTime} onChange={e => setEndTime(e.target.value)}/></div>
-                                        <button className="btn btn-secondary" onClick={handleScheduleQuiz}>Set Schedule</button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        <div className="row">
-                            <div className="col-md-4"><div className="card text-center h-100"><div className="card-body"><h6 className="card-subtitle mb-2 text-muted">Total Candidates</h6><p className="card-text fs-1 fw-bold">{candidates.length}</p></div></div></div>
-                            <div className="col-md-4"><div className="card text-center h-100"><div className="card-body"><h6 className="card-subtitle mb-2 text-muted">Submissions</h6><p className="card-text fs-1 fw-bold">{results.length}</p></div></div></div>
-                            <div className="col-md-4"><div className="card text-center h-100"><div className="card-body"><h6 className="card-subtitle mb-2 text-muted">Attendance Rate</h6><p className="card-text fs-1 fw-bold">{attendanceRate}%</p></div></div></div>
-                        </div>
-                    </div>
-                )}
-                {managementView === 'candidates' && (<div className="card"><div className="card-header d-flex justify-content-between align-items-center"><h5>Candidate List ({filteredCandidates.length})</h5><button className="btn btn-primary" onClick={() => setShowCandidateModal(true)}>+ Add Candidates</button></div><div className="p-3 border-bottom"><input type="text" className="form-control" placeholder="Search by name or mobile..." value={candidateSearch} onChange={e => setCandidateSearch(e.target.value)} /></div><div className="table-responsive"><table className="table table-striped table-hover mb-0"><thead><tr><th>Name</th><th>Mobile</th><th>DOB</th><th>Status</th><th>Actions</th></tr></thead><tbody>{filteredCandidates.map(c => (<tr key={c.id}><td>{c.name}</td><td>{c.mobile}</td><td>{c.dob}</td><td>{getCandidateStatus(c)}</td><td><button className="btn btn-sm btn-outline-primary me-2" onClick={() => openEditCandidateModal(c)}>Edit</button><button className="btn btn-sm btn-outline-danger" onClick={() => handleDeleteCandidate(c.id)}>Delete</button></td></tr>))}</tbody></table></div></div>)}
-                {managementView === 'questions' && (<div>{selectedFolder ? <QuestionManagement quizId={selectedQuiz.id} folder={selectedFolder} onBack={() => setSelectedFolder(null)} /> : (<div className="card"><div className="card-header"><h5>Question Folders</h5></div>{foldersLoading ? <div className="card-body text-center"><p>Loading folders...</p></div> : (<div className="list-group list-group-flush">{folders.map(folder => (<div key={folder.id} className="list-group-item d-flex justify-content-between align-items-center"><span>{folder.name} <span className={`badge ${folder.type === 'fixed' ? 'bg-info' : 'bg-secondary'}`}>{folder.type}</span></span><button className="btn btn-secondary btn-sm" onClick={() => setSelectedFolder(folder)}>View Questions</button></div>))}</div>)}</div>)}</div>)}
-                {managementView === 'results' && (<div className="card"><div className="card-header d-flex justify-content-between align-items-center"><h5>Quiz Results ({results.length} submissions)</h5><button className="btn btn-success" onClick={handleDownloadResults}>Download Results</button></div><div className="table-responsive"><table className="table table-striped table-hover mb-0"><thead><tr><th>Rank</th><th>Candidate Name</th><th>Score</th><th>Actions</th></tr></thead><tbody>{results.map((res, index) => (<tr key={res.id}><td>{index + 1}</td><td>{res.candidateInfo.name || 'Unknown'}</td><td>{res.score} / {res.totalQuestions}</td><td><button className="btn btn-sm btn-outline-info" onClick={() => openViewAnswersModal(res)}>View Answers</button></td></tr>))}</tbody></table></div></div>)}
-                {showCandidateModal && <AddCandidateModal quizId={selectedQuiz.id} onClose={() => setShowCandidateModal(false)} />}
-                {showEditCandidateModal && <EditCandidateModal quizId={selectedQuiz.id} candidate={candidateToEdit} onClose={() => setShowEditCandidateModal(false)} />}
-                {showViewAnswersModal && <ViewAnswersModal quizId={selectedQuiz.id} result={selectedResultForView} onClose={() => setShowViewAnswersModal(false)} />}
-            </div>
-        );
-    }
-
-    return (
-        <div>
-            <div className="d-flex justify-content-between align-items-center mb-4"><h1 className="h2">Admin Dashboard</h1><button className="btn btn-primary" onClick={() => setShowCreateQuizModal(true)}>+ Create New Quiz</button></div>
-            <div className="row g-4">
-                {quizzes.map(quiz => (
-                    <div key={quiz.id} className="col-md-6 col-lg-4">
-                        <div className="card h-100">
-                            <div className="card-body d-flex flex-column">
-                                <div className="d-flex justify-content-between"><h5 className="card-title">{quiz.name}</h5><div className="dropdown"><button className="btn btn-sm btn-light" type="button" data-bs-toggle="dropdown" aria-expanded="false">&#8942;</button><ul className="dropdown-menu dropdown-menu-end"><li><button className="dropdown-item" onClick={() => openEditQuizModal(quiz)}>Edit</button></li><li><button className="dropdown-item text-danger" onClick={() => handleDeleteQuiz(quiz.id)}>Delete</button></li></ul></div></div>
-                                {quiz.createdAt && <p className="card-subtitle mb-2 text-muted small">Created: {new Date(quiz.createdAt.seconds * 1000).toLocaleDateString()}</p>}
-                                <div className="mt-auto pt-3 d-flex justify-content-between align-items-center">
-                                    <button className="btn btn-primary" onClick={() => setSelectedQuiz(quiz)}>Manage</button>
-                                    <button className="btn btn-outline-secondary btn-sm" onClick={() => copyToClipboard(quiz.id)}>Copy Link</button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                ))}
-            </div>
-            {showCreateQuizModal && <Modal onClose={() => setShowCreateQuizModal(false)} title="Create New Quiz"><input type="text" className="form-control" value={newQuizName} onChange={(e) => setNewQuizName(e.target.value)} /><button className="btn btn-primary mt-3" onClick={handleCreateQuiz}>Create</button></Modal>}
-            {showEditQuizModal && (<Modal onClose={() => setShowEditQuizModal(false)} title="Edit Quiz Name"><input type="text" className="form-control" value={editedQuizName} onChange={(e) => setEditedQuizName(e.target.value)} /><button className="btn btn-primary mt-3" onClick={handleUpdateQuiz}>Update</button></Modal>)}
-        </div>
+  // Fetch all quizzes
+  useEffect(() => {
+    setLoading(true);
+    const unsubscribe = onSnapshot(
+      collection(db, "quizzes"),
+      (snapshot) => {
+        setQuizzes(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
+        setLoading(false);
+      },
+      (err) => {
+        setError("Failed to load quizzes.");
+      }
     );
-}
+    return () => unsubscribe();
+  }, []);
+
+  // Real-time status checker for the selected quiz
+  useEffect(() => {
+    if (!selectedQuiz || !selectedQuiz.startTime || !selectedQuiz.endTime)
+      return;
+
+    const interval = setInterval(async () => {
+      const now = new Date();
+      const start = new Date(selectedQuiz.startTime);
+      const end = new Date(selectedQuiz.endTime);
+      const currentStatus = selectedQuiz.status;
+      let newStatus = currentStatus;
+
+      if (now >= start && now <= end) {
+        if (currentStatus !== "active") newStatus = "active";
+      } else if (now > end) {
+        if (currentStatus === "active") newStatus = "inactive";
+      }
+
+      if (newStatus !== currentStatus) {
+        const quizRef = doc(db, "quizzes", selectedQuiz.id);
+        await updateDoc(quizRef, { status: newStatus });
+        setSelectedQuiz((prev) => ({ ...prev, status: newStatus }));
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [selectedQuiz]);
+
+  // Fetch data for the selected quiz
+  const fetchQuizData = useCallback((quizId) => {
+    if (!quizId) return;
+    const candidatesRef = collection(db, "quizzes", quizId, "candidates");
+    const unsubscribeCandidates = onSnapshot(candidatesRef, (snapshot) => {
+      setCandidates(
+        snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
+      );
+    });
+    const resultsRef = collection(db, "quizzes", quizId, "results");
+    const unsubscribeResults = onSnapshot(resultsRef, (snapshot) => {
+      setResults(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
+    });
+    return () => {
+      unsubscribeCandidates();
+      unsubscribeResults();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (selectedQuiz) {
+      const unsubscribe = fetchQuizData(selectedQuiz.id);
+      return unsubscribe;
+    }
+  }, [selectedQuiz, fetchQuizData]);
+
+  // Calculate home stats
+  useEffect(() => {
+    if (selectedQuiz) {
+      const registered = candidates.length;
+      const submissions = results.length;
+      const attendance =
+        registered > 0 ? ((submissions / registered) * 100).toFixed(1) : 0;
+      setHomeStats({ registered, submissions, attendance });
+      setStartTime(selectedQuiz.startTime || "");
+      setEndTime(selectedQuiz.endTime || "");
+    }
+  }, [candidates, results, selectedQuiz]);
+
+  const handleCreateQuiz = async () => {
+    if (
+      !newQuizName.trim() ||
+      !newQuizDuration ||
+      !newFixedCount ||
+      (includePool && !newPoolCount)
+    ) {
+      alert("Please fill in all required quiz details.");
+      return;
+    }
+    try {
+      const docRef = await addDoc(collection(db, "quizzes"), {
+        name: newQuizName,
+        duration: parseInt(newQuizDuration, 10),
+        type: newQuizType,
+        includePoolQuestions: includePool,
+        poolQuestionsCount: includePool ? parseInt(newPoolCount, 10) : 0,
+        fixedQuestionsCount: parseInt(newFixedCount, 10),
+        createdAt: serverTimestamp(),
+        status: "inactive",
+      });
+
+      const batch = writeBatch(db);
+      const poolFolderRef = doc(
+        db,
+        "quizzes",
+        docRef.id,
+        "folders",
+        "pool_questions"
+      );
+      batch.set(poolFolderRef, {
+        name: "Pool Questions",
+        createdAt: serverTimestamp(),
+      });
+      const fixedFolderRef = doc(
+        db,
+        "quizzes",
+        docRef.id,
+        "folders",
+        "fixed_questions"
+      );
+      batch.set(fixedFolderRef, {
+        name: "Fixed Questions",
+        createdAt: serverTimestamp(),
+      });
+      await batch.commit();
+
+      setNewQuizName("");
+      setNewQuizDuration(15);
+      setNewQuizType("Multiple Choice");
+      setIncludePool(true);
+      setNewPoolCount(20);
+      setNewFixedCount(10);
+      setCreateModalOpen(false);
+    } catch (error) {
+      alert("Failed to create quiz.");
+    }
+  };
+
+  const openEditQuizModal = (quiz) => {
+    setQuizToEdit({
+      ...quiz,
+      includePoolQuestions: quiz.includePoolQuestions !== false,
+      poolQuestionsCount: quiz.poolQuestionsCount || 20,
+      fixedQuestionsCount: quiz.fixedQuestionsCount || 10,
+    });
+    setEditQuizModalOpen(true);
+  };
+
+  const handleUpdateQuiz = async () => {
+    if (!quizToEdit || !quizToEdit.name.trim() || !quizToEdit.duration) {
+      alert("Please provide a valid name and duration.");
+      return;
+    }
+    try {
+      const quizRef = doc(db, "quizzes", quizToEdit.id);
+      await updateDoc(quizRef, {
+        name: quizToEdit.name,
+        duration: parseInt(quizToEdit.duration, 10),
+        type: quizToEdit.type,
+        includePoolQuestions: quizToEdit.includePoolQuestions,
+        poolQuestionsCount: quizToEdit.includePoolQuestions
+          ? parseInt(quizToEdit.poolQuestionsCount, 10)
+          : 0,
+        fixedQuestionsCount: parseInt(quizToEdit.fixedQuestionsCount, 10),
+      });
+      setEditQuizModalOpen(false);
+      setQuizToEdit(null);
+    } catch (error) {
+      alert("Failed to update quiz.");
+    }
+  };
+
+  const handleDeleteQuiz = async (quizId) => {
+    if (
+      window.confirm(
+        "Are you sure you want to delete this quiz and all its data? This action cannot be undone."
+      )
+    ) {
+      await deleteDoc(doc(db, "quizzes", quizId));
+      if (selectedQuiz && selectedQuiz.id === quizId) {
+        setSelectedQuiz(null);
+      }
+    }
+  };
+
+  const handleLogout = () =>
+    signOut(auth).catch((error) => console.error("Logout Error:", error));
+  const getQuizLink = (id) =>
+    `${window.location.origin}${process.env.PUBLIC_URL}/#/quiz/${id}`;
+  const copyToClipboard = (id) =>
+    navigator.clipboard
+      .writeText(getQuizLink(id))
+      .then(() => alert("Quiz link copied!"));
+
+  const handleDeleteCandidate = async (candidate) => {
+    if (window.confirm("Are you sure you want to delete this candidate?")) {
+      try {
+        await deleteDoc(
+          doc(db, "quizzes", selectedQuiz.id, "candidates", candidate.id)
+        );
+        if (candidate.phone) {
+          const resultRef = doc(
+            db,
+            "quizzes",
+            selectedQuiz.id,
+            "results",
+            candidate.phone
+          );
+          await deleteDoc(resultRef);
+        }
+      } catch (error) {
+        alert("Failed to delete candidate.");
+      }
+    }
+  };
+
+  const filteredCandidates = candidates.filter(
+    (c) =>
+      c.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      c.phone?.includes(searchQuery) ||
+      c.place?.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const getCandidateStatus = (candidate) => {
+    const result = results.find((r) => r.id === candidate.phone);
+    if (result) return { text: "Attended", class: "bg-success" };
+    if (candidate.status === "attending")
+      return { text: "Attending", class: "bg-primary" };
+    return { text: "Not Attended", class: "bg-secondary" };
+  };
+
+  const sortedResults = [...results].sort((a, b) => {
+    if (b.score !== a.score) {
+      return b.score - a.score;
+    }
+    const timeA = a.submittedAt?.toDate() - a.startTime?.toDate() || Infinity;
+    const timeB = b.submittedAt?.toDate() - b.startTime?.toDate() || Infinity;
+    return timeA - timeB;
+  });
+
+  const handleDownloadResults = async () => {
+    if (results.length === 0) {
+      alert("No results to download.");
+      return;
+    }
+    const dataToExport = await Promise.all(
+      sortedResults.map(async (result) => {
+        const candidateData = candidates.find((c) => c.phone === result.id) || {
+          name: "N/A",
+          place: "N/A",
+        };
+        const startTime = result.startTime?.toDate();
+        const submitTime = result.submittedAt?.toDate();
+        let timeTaken = "N/A";
+        if (startTime && submitTime) {
+          const diffMs = submitTime - startTime;
+          const diffMins = Math.floor(diffMs / 60000);
+          const diffSecs = Math.round((diffMs % 60000) / 1000);
+          timeTaken = `${diffMins}m ${diffSecs}s`;
+        }
+        return {
+          Rank: sortedResults.indexOf(result) + 1,
+          Name: candidateData.name,
+          Place: candidateData.place,
+          "Phone Number": result.id,
+          Score: `${result.score} / ${result.totalQuestions}`,
+          "Time Taken": timeTaken,
+        };
+      })
+    );
+    const worksheet = utils.json_to_sheet(dataToExport);
+    const workbook = utils.book_new();
+    utils.book_append_sheet(workbook, worksheet, "Results");
+    writeFile(workbook, `${selectedQuiz.name}_Results.xlsx`);
+  };
+
+  const handleManualToggleStatus = async () => {
+    const newStatus = selectedQuiz.status === "active" ? "inactive" : "active";
+    try {
+      await updateDoc(doc(db, "quizzes", selectedQuiz.id), {
+        status: newStatus,
+        startTime: null,
+        endTime: null,
+      });
+      setSelectedQuiz((prev) => ({
+        ...prev,
+        status: newStatus,
+        startTime: null,
+        endTime: null,
+      }));
+    } catch (error) {
+      alert("Failed to update quiz status.");
+    }
+  };
+
+  const handleScheduleQuiz = async () => {
+    if (!startTime || !endTime) {
+      alert("Please set both a start and end time.");
+      return;
+    }
+    try {
+      await updateDoc(doc(db, "quizzes", selectedQuiz.id), {
+        startTime: startTime,
+        endTime: endTime,
+        status: "inactive",
+      });
+      setSelectedQuiz((prev) => ({
+        ...prev,
+        startTime,
+        endTime,
+        status: "inactive",
+      }));
+      alert("Quiz schedule updated successfully.");
+    } catch (error) {
+      alert("Failed to schedule quiz.");
+    }
+  };
+
+  if (loading)
+    return <div className='loading-container'>Loading Dashboard...</div>;
+  if (error) return <div className='error-container'>{error}</div>;
+
+  if (!selectedQuiz) {
+    return (
+      <>
+        <header className='d-flex justify-content-between align-items-center p-3 px-4 border-bottom bg-white'>
+          <h1 className='h4 m-0 fw-bold text-dark'>Meem Quiz</h1>
+          <button onClick={handleLogout} className='btn btn-outline-secondary'>
+            Logout
+          </button>
+        </header>
+        <main className='container-fluid p-4'>
+          <div className='d-flex justify-content-between align-items-center mb-4'>
+            <h2 className='h3'>Admin Dashboard</h2>
+            <button
+              onClick={() => setCreateModalOpen(true)}
+              className='btn btn-primary'
+            >
+              + Create New Quiz
+            </button>
+          </div>
+          <div className='row g-4'>
+            {quizzes.map((quiz) => {
+              const totalQuestions =
+                (quiz.includePoolQuestions ? quiz.poolQuestionsCount || 0 : 0) +
+                (quiz.fixedQuestionsCount || 0);
+              return (
+                <div key={quiz.id} className='col-md-6 col-lg-4'>
+                  <div className='card h-100 shadow-sm'>
+                    <div className='card-body d-flex flex-column'>
+                      <div className='d-flex justify-content-between'>
+                        <h5 className='card-title'>{quiz.name}</h5>
+                        <div className='dropdown'>
+                          <button
+                            className='btn btn-sm btn-light'
+                            type='button'
+                            data-bs-toggle='dropdown'
+                          >
+                            &#8942;
+                          </button>
+                          <ul className='dropdown-menu dropdown-menu-end'>
+                            <li>
+                              <button
+                                className='dropdown-item'
+                                onClick={() => openEditQuizModal(quiz)}
+                              >
+                                Edit
+                              </button>
+                            </li>
+                            <li>
+                              <button
+                                className='dropdown-item text-danger'
+                                onClick={() => handleDeleteQuiz(quiz.id)}
+                              >
+                                Delete
+                              </button>
+                            </li>
+                          </ul>
+                        </div>
+                      </div>
+                      <p className='card-subtitle mb-2 text-muted small'>
+                        Total Questions: {totalQuestions}
+                      </p>
+                      <div className='mt-auto pt-3 d-flex justify-content-between align-items-center'>
+                        <button
+                          onClick={() => setSelectedQuiz(quiz)}
+                          className='btn btn-primary'
+                        >
+                          Manage
+                        </button>
+                        <button
+                          onClick={() => copyToClipboard(quiz.id)}
+                          className='btn btn-outline-secondary'
+                        >
+                          Copy Link
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </main>
+
+        {isCreateModalOpen && (
+          <div className='modal show' style={{ display: "block" }}>
+            <div className='modal-dialog'>
+              <div className='modal-content'>
+                <div className='modal-header'>
+                  <h5 className='modal-title'>Create New Quiz</h5>
+                  <button
+                    type='button'
+                    className='btn-close'
+                    onClick={() => setCreateModalOpen(false)}
+                  ></button>
+                </div>
+                <div className='modal-body'>
+                  <div className='mb-3'>
+                    <label className='form-label'>Quiz Name</label>
+                    <input
+                      type='text'
+                      className='form-control'
+                      value={newQuizName}
+                      onChange={(e) => setNewQuizName(e.target.value)}
+                    />
+                  </div>
+                  <div className='mb-3'>
+                    <label className='form-label'>Duration (minutes)</label>
+                    <input
+                      type='number'
+                      className='form-control'
+                      value={newQuizDuration}
+                      onChange={(e) => setNewQuizDuration(e.target.value)}
+                    />
+                  </div>
+                  <div className='mb-3'>
+                    <label className='form-label'>Quiz Type</label>
+                    <select
+                      className='form-select'
+                      value={newQuizType}
+                      onChange={(e) => setNewQuizType(e.target.value)}
+                    >
+                      <option>Multiple Choice</option>
+                      <option>Descriptive</option>
+                    </select>
+                  </div>
+                  <div className='form-check mb-3'>
+                    <input
+                      className='form-check-input'
+                      type='checkbox'
+                      checked={includePool}
+                      onChange={(e) => setIncludePool(e.target.checked)}
+                      id='includePoolCheck'
+                    />
+                    <label
+                      className='form-check-label'
+                      htmlFor='includePoolCheck'
+                    >
+                      Include Pool Questions
+                    </label>
+                  </div>
+                  {includePool && (
+                    <div className='mb-3'>
+                      <label className='form-label'>
+                        Number of Pool Questions
+                      </label>
+                      <input
+                        type='number'
+                        className='form-control'
+                        value={newPoolCount}
+                        onChange={(e) => setNewPoolCount(e.target.value)}
+                      />
+                    </div>
+                  )}
+                  <div className='mb-3'>
+                    <label className='form-label'>
+                      Number of Fixed Questions
+                    </label>
+                    <input
+                      type='number'
+                      className='form-control'
+                      value={newFixedCount}
+                      onChange={(e) => setNewFixedCount(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className='modal-footer'>
+                  <button
+                    type='button'
+                    className='btn btn-secondary'
+                    onClick={() => setCreateModalOpen(false)}
+                  >
+                    Close
+                  </button>
+                  <button
+                    type='button'
+                    className='btn btn-primary'
+                    onClick={handleCreateQuiz}
+                  >
+                    Create Quiz
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+        {isEditQuizModalOpen && quizToEdit && (
+          <div className='modal show' style={{ display: "block" }}>
+            <div className='modal-dialog'>
+              <div className='modal-content'>
+                <div className='modal-header'>
+                  <h5 className='modal-title'>Edit Quiz</h5>
+                  <button
+                    type='button'
+                    className='btn-close'
+                    onClick={() => setEditQuizModalOpen(false)}
+                  ></button>
+                </div>
+                <div className='modal-body'>
+                  <div className='mb-3'>
+                    <label className='form-label'>Quiz Name</label>
+                    <input
+                      type='text'
+                      className='form-control'
+                      value={quizToEdit.name}
+                      onChange={(e) =>
+                        setQuizToEdit({ ...quizToEdit, name: e.target.value })
+                      }
+                    />
+                  </div>
+                  <div className='mb-3'>
+                    <label className='form-label'>Duration (minutes)</label>
+                    <input
+                      type='number'
+                      className='form-control'
+                      value={quizToEdit.duration}
+                      onChange={(e) =>
+                        setQuizToEdit({
+                          ...quizToEdit,
+                          duration: e.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                  <div className='mb-3'>
+                    <label className='form-label'>Quiz Type</label>
+                    <select
+                      className='form-select'
+                      value={quizToEdit.type}
+                      onChange={(e) =>
+                        setQuizToEdit({ ...quizToEdit, type: e.target.value })
+                      }
+                    >
+                      <option>Multiple Choice</option>
+                      <option>Descriptive</option>
+                    </select>
+                  </div>
+                  <div className='form-check mb-3'>
+                    <input
+                      className='form-check-input'
+                      type='checkbox'
+                      checked={quizToEdit.includePoolQuestions}
+                      onChange={(e) =>
+                        setQuizToEdit({
+                          ...quizToEdit,
+                          includePoolQuestions: e.target.checked,
+                        })
+                      }
+                      id='editIncludePool'
+                    />
+                    <label
+                      className='form-check-label'
+                      htmlFor='editIncludePool'
+                    >
+                      Include Pool Questions
+                    </label>
+                  </div>
+                  {quizToEdit.includePoolQuestions && (
+                    <div className='mb-3'>
+                      <label className='form-label'>
+                        Number of Pool Questions
+                      </label>
+                      <input
+                        type='number'
+                        className='form-control'
+                        value={quizToEdit.poolQuestionsCount}
+                        onChange={(e) =>
+                          setQuizToEdit({
+                            ...quizToEdit,
+                            poolQuestionsCount: e.target.value,
+                          })
+                        }
+                      />
+                    </div>
+                  )}
+                  <div className='mb-3'>
+                    <label className='form-label'>
+                      Number of Fixed Questions
+                    </label>
+                    <input
+                      type='number'
+                      className='form-control'
+                      value={quizToEdit.fixedQuestionsCount}
+                      onChange={(e) =>
+                        setQuizToEdit({
+                          ...quizToEdit,
+                          fixedQuestionsCount: e.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+                <div className='modal-footer'>
+                  <button
+                    type='button'
+                    className='btn btn-secondary'
+                    onClick={() => setEditQuizModalOpen(false)}
+                  >
+                    Close
+                  </button>
+                  <button
+                    type='button'
+                    className='btn btn-primary'
+                    onClick={handleUpdateQuiz}
+                  >
+                    Save Changes
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </>
+    );
+  }
+
+  return (
+    <>
+      <header className='d-flex justify-content-between align-items-center p-3 px-4 border-bottom bg-white'>
+        <h1 className='h4 m-0 fw-bold text-dark'>Meem Quiz</h1>
+        <button onClick={handleLogout} className='btn btn-outline-secondary'>
+          Logout
+        </button>
+      </header>
+      <main className='container-fluid p-4'>
+        <div className='mb-4'>
+          <button
+            onClick={() => setSelectedQuiz(null)}
+            className='btn btn-outline-secondary'
+          >
+            &larr; Back to All Quizzes
+          </button>
+        </div>
+        <h2 className='h3 mb-3'>Manage: {selectedQuiz?.name}</h2>
+        <ul className='nav nav-tabs mb-4'>
+          <li className='nav-item'>
+            <button
+              onClick={() => setManagementTab("home")}
+              className={`nav-link ${managementTab === "home" ? "active" : ""}`}
+            >
+              Home
+            </button>
+          </li>
+          <li className='nav-item'>
+            <button
+              onClick={() => setManagementTab("candidates")}
+              className={`nav-link ${
+                managementTab === "candidates" ? "active" : ""
+              }`}
+            >
+              Candidates
+            </button>
+          </li>
+          <li className='nav-item'>
+            <button
+              onClick={() => setManagementTab("questions")}
+              className={`nav-link ${
+                managementTab === "questions" ? "active" : ""
+              }`}
+            >
+              Questions
+            </button>
+          </li>
+          <li className='nav-item'>
+            <button
+              onClick={() => setManagementTab("result")}
+              className={`nav-link ${
+                managementTab === "result" ? "active" : ""
+              }`}
+            >
+              Result
+            </button>
+          </li>
+        </ul>
+
+        <div className='management-content'>
+          {managementTab === "home" && (
+            <div>
+              <div className='card mb-4'>
+                <div className='card-header'>
+                  <h5>Quiz Controls</h5>
+                </div>
+                <div className='card-body'>
+                  <div className='row'>
+                    <div className='col-md-6'>
+                      <h6>Manual Control</h6>
+                      <p className='mb-2'>
+                        Current Status:{" "}
+                        <strong className='text-capitalize'>
+                          {selectedQuiz.status}
+                        </strong>
+                      </p>
+                      <button
+                        onClick={handleManualToggleStatus}
+                        className={`btn ${
+                          selectedQuiz.status === "active"
+                            ? "btn-danger"
+                            : "btn-success"
+                        }`}
+                      >
+                        {selectedQuiz.status === "active"
+                          ? "End Quiz Now"
+                          : "Start Quiz Now"}
+                      </button>
+                    </div>
+                    <div className='col-md-6'>
+                      <h6>Schedule Quiz</h6>
+                      {selectedQuiz.startTime && selectedQuiz.endTime && (
+                        <div className='alert alert-info'>
+                          Scheduled from{" "}
+                          {new Date(selectedQuiz.startTime).toLocaleString()} to{" "}
+                          {new Date(selectedQuiz.endTime).toLocaleString()}
+                        </div>
+                      )}
+                      <div className='mb-2'>
+                        <label className='form-label'>Start Time</label>
+                        <input
+                          type='datetime-local'
+                          value={startTime}
+                          onChange={(e) => setStartTime(e.target.value)}
+                          className='form-control'
+                        />
+                      </div>
+                      <div className='mb-3'>
+                        <label className='form-label'>End Time</label>
+                        <input
+                          type='datetime-local'
+                          value={endTime}
+                          onChange={(e) => setEndTime(e.target.value)}
+                          className='form-control'
+                        />
+                      </div>
+                      <button
+                        onClick={handleScheduleQuiz}
+                        className='btn btn-secondary'
+                      >
+                        Set Schedule
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className='row g-4'>
+                <div className='col-md-4'>
+                  <div className='card text-center h-100'>
+                    <div className='card-body'>
+                      <h6 className='card-subtitle mb-2 text-muted'>
+                        Total Candidates
+                      </h6>
+                      <p className='card-text fs-1 fw-bold'>
+                        {homeStats.registered}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <div className='col-md-4'>
+                  <div className='card text-center h-100'>
+                    <div className='card-body'>
+                      <h6 className='card-subtitle mb-2 text-muted'>
+                        Submissions
+                      </h6>
+                      <p className='card-text fs-1 fw-bold'>
+                        {homeStats.submissions}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <div className='col-md-4'>
+                  <div className='card text-center h-100'>
+                    <div className='card-body'>
+                      <h6 className='card-subtitle mb-2 text-muted'>
+                        Attendance Rate
+                      </h6>
+                      <p className='card-text fs-1 fw-bold'>
+                        {homeStats.attendance}%
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+          {managementTab === "candidates" && (
+            <div className='card'>
+              <div className='card-header d-flex justify-content-between align-items-center'>
+                <h5>Candidate List ({filteredCandidates.length})</h5>
+                <button
+                  onClick={() => setAddCandidateModalOpen(true)}
+                  className='btn btn-primary'
+                >
+                  + Add Candidates
+                </button>
+              </div>
+              <div className='p-3 border-bottom'>
+                <input
+                  type='text'
+                  placeholder='Search by name, place, or phone...'
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className='form-control'
+                />
+              </div>
+              <div className='table-responsive'>
+                <table className='table table-striped table-hover mb-0'>
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Place</th>
+                      <th>Phone Number</th>
+                      <th>Status</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredCandidates.map((candidate) => {
+                      const status = getCandidateStatus(candidate);
+                      return (
+                        <tr key={candidate.id}>
+                          <td>{candidate.name}</td>
+                          <td>{candidate.place}</td>
+                          <td>{candidate.phone}</td>
+                          <td>
+                            <span className={`badge ${status.class}`}>
+                              {status.text}
+                            </span>
+                          </td>
+                          <td>
+                            <button
+                              onClick={() => {
+                                setCandidateToEdit(candidate);
+                                setEditCandidateModalOpen(true);
+                              }}
+                              className='btn btn-sm btn-outline-primary me-2'
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => handleDeleteCandidate(candidate)}
+                              className='btn btn-sm btn-outline-danger'
+                            >
+                              Delete
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+          {managementTab === "questions" && (
+            <QuestionManagement quiz={selectedQuiz} />
+          )}
+          {managementTab === "result" && (
+            <div className='card'>
+              <div className='card-header d-flex justify-content-between align-items-center'>
+                <h5>Quiz Results ({sortedResults.length} submissions)</h5>
+                <button
+                  onClick={handleDownloadResults}
+                  className='btn btn-success'
+                >
+                  Download Results
+                </button>
+              </div>
+              <div className='table-responsive'>
+                <table className='table table-striped table-hover mb-0'>
+                  <thead>
+                    <tr>
+                      <th>Rank</th>
+                      <th>Candidate Name</th>
+                      <th>Score</th>
+                      <th>Time Taken</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedResults.map((result, index) => {
+                      const candidate = candidates.find(
+                        (c) => c.phone === result.id
+                      );
+                      const startTime = result.startTime?.toDate();
+                      const submitTime = result.submittedAt?.toDate();
+                      let timeTaken = "N/A";
+                      if (startTime && submitTime) {
+                        const diffMs = submitTime - startTime;
+                        const diffMins = Math.floor(diffMs / 60000);
+                        const diffSecs = Math.round((diffMs % 60000) / 1000);
+                        timeTaken = `${diffMins}m ${diffSecs}s`;
+                      }
+                      return (
+                        <tr key={result.id}>
+                          <td>{index + 1}</td>
+                          <td>{candidate ? candidate.name : "Unknown"}</td>
+                          <td>
+                            {result.score} / {result.totalQuestions}
+                          </td>
+                          <td>{timeTaken}</td>
+                          <td>
+                            <button
+                              onClick={() => {
+                                setAnswersToView(result);
+                                setViewAnswersModalOpen(true);
+                              }}
+                              className='btn btn-sm btn-outline-info'
+                            >
+                              View Answers
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      </main>
+      {isAddCandidateModalOpen && selectedQuiz && (
+        <AddCandidateModal
+          quizId={selectedQuiz.id}
+          onClose={() => setAddCandidateModalOpen(false)}
+        />
+      )}
+      {isEditCandidateModalOpen && candidateToEdit && selectedQuiz && (
+        <EditCandidateModal
+          quizId={selectedQuiz.id}
+          candidate={candidateToEdit}
+          onClose={() => {
+            setEditCandidateModalOpen(false);
+            setCandidateToEdit(null);
+          }}
+        />
+      )}
+      {isViewAnswersModalOpen && answersToView && selectedQuiz && (
+        <ViewAnswersModal
+          quiz={selectedQuiz}
+          result={answersToView}
+          onClose={() => {
+            setViewAnswersModalOpen(false);
+            setAnswersToView(null);
+          }}
+        />
+      )}
+    </>
+  );
+};
+export default AdminDashboard;

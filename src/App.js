@@ -1,116 +1,102 @@
-import React, {useState, useEffect } from 'react';
-import { auth } from './firebase/config';
-import { onAuthStateChanged, signOut } from 'firebase/auth';
+import React, { useState, useEffect } from "react";
+import { onAuthStateChanged } from "firebase/auth";
+import { auth } from "./firebase/config";
 
-import AdminLogin from './pages/AdminLogin';
-import AdminDashboard from './pages/AdminDashboard';
-import CandidateLogin from './pages/CandidateLogin';
-import Quiz from './pages/Quiz';
-import Loading from './components/common/Loading';
-import NotFound from './pages/NotFound';
+import AdminLogin from "./pages/AdminLogin";
+import AdminDashboard from "./pages/AdminDashboard";
+import CandidateLogin from "./pages/CandidateLogin";
+import Quiz from "./pages/Quiz";
 
-// --- New Hash-Based Routing Logic ---
-const useHashNavigation = () => {
-    const [route, setRoute] = useState({ page: 'loading', quizId: null, candidateId: null });
-
-    useEffect(() => {
-        const handleHashChange = () => {
-            const hash = window.location.hash.replace('#/', '');
-            const pathSegments = hash.split('/');
-
-            if (pathSegments[0] === 'quiz' && pathSegments[1]) {
-                if (pathSegments[2] && pathSegments[2] === 'start' && pathSegments[3]) {
-                    // This is a candidate who has successfully logged in and is starting the quiz
-                    setRoute({ page: 'quiz', quizId: pathSegments[1], candidateId: pathSegments[3] });
-                } else {
-                    // This is the candidate login page for a specific quiz
-                    setRoute({ page: 'candidateLogin', quizId: pathSegments[1], candidateId: null });
-                }
-            } else {
-                // Default to admin login
-                setRoute({ page: 'adminLogin', quizId: null, candidateId: null });
-            }
-        };
-
-        window.addEventListener('hashchange', handleHashChange);
-        handleHashChange(); // Initial check
-
-        return () => window.removeEventListener('hashchange', handleHashChange);
-    }, []);
-
-    return route;
+// Helper to check for admin status
+const isAdmin = async (user) => {
+  if (!user) return false;
+  // This identifies the admin by a specific email.
+  return user.email === "shakirokm@gmail.com";
 };
 
+function App() {
+  const [page, setPage] = useState("loading"); // loading, adminLogin, adminDashboard, candidateLogin, quiz
+  const [quizId, setQuizId] = useState(null);
+  const [candidate, setCandidate] = useState(null);
 
-export default function App() {
-    const [adminUser, setAdminUser] = useState(null);
-    const [isAuthReady, setIsAuthReady] = useState(false);
-    const route = useHashNavigation(); // Use the new routing hook
+  // This effect runs only ONCE to determine the initial route.
+  useEffect(() => {
+    const hash = window.location.hash.slice(1); // remove # from "#/quiz/id" to get "/quiz/id"
+    const pathSegments = hash.split("/"); // results in ["", "quiz", "id"]
 
-    useEffect(() => {
-        // Auth listener now only manages the admin's login state
-        const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-            if (currentUser && currentUser.email === 'quizegon2025@gmail.com') {
-                setAdminUser(currentUser);
-            } else {
-                setAdminUser(null);
-            }
-            setIsAuthReady(true);
-        });
-        return () => unsubscribe();
-    }, []);
+    // This listener determines if the user is an admin or not.
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user && (await isAdmin(user))) {
+        setPage("adminDashboard");
+        return;
+      }
 
-    const handleCandidateLoginSuccess = (candidateId) => {
-        // Navigate to the quiz page by changing the hash
-        window.location.hash = `#/quiz/${route.quizId}/start/${candidateId}`;
-    };
+      // If not an admin, we check the URL hash to decide the page.
+      // Corrected check: segments are ["", "quiz", "id"]
+      if (pathSegments[1] === "quiz" && pathSegments[2]) {
+        setQuizId(pathSegments[2]);
+        setPage("candidateLogin");
+      } else {
+        setPage("adminLogin");
+      }
+    });
 
-    const handleLogout = async () => {
-        if (adminUser) {
-            await signOut(auth);
-            setAdminUser(null);
-            window.location.hash = '#/'; // Go to admin login
-        } else {
-            // For candidates, go back to their specific quiz login page
-            window.location.hash = `#/quiz/${route.quizId}`;
+    // Cleanup the listener when the component unmounts
+    return () => unsubscribe();
+  }, []); // The empty array ensures this effect runs only once on mount.
+
+  const handleLoginSuccess = (candidateData) => {
+    setCandidate(candidateData);
+    setPage("quiz");
+  };
+
+  const handleLogout = () => {
+    setCandidate(null);
+    // Go back to the correct login page based on the original hash
+    const hash = window.location.hash.slice(1);
+    const pathSegments = hash.split("/");
+    if (pathSegments[1] === "quiz" && pathSegments[2]) {
+      setPage("candidateLogin");
+    } else {
+      setPage("adminLogin");
+    }
+  };
+
+  const handleAdminLogout = () => {
+    setPage("adminLogin");
+  };
+
+  const renderPage = () => {
+    switch (page) {
+      case "adminLogin":
+        return <AdminLogin onAdminLogin={() => setPage("adminDashboard")} />;
+      case "adminDashboard":
+        return <AdminDashboard onLogout={handleAdminLogout} />;
+      case "candidateLogin":
+        return (
+          <CandidateLogin quizId={quizId} onLoginSuccess={handleLoginSuccess} />
+        );
+      case "quiz":
+        // Final safety check: If we're on the quiz page but have no candidate,
+        // something went wrong, so we safely redirect to the login page.
+        if (!candidate) {
+          handleLogout(); // This resets to the correct login page
+          return <div>Redirecting to login...</div>;
         }
-    };
+        return (
+          <Quiz
+            quizId={quizId}
+            candidate={candidate}
+            onQuizComplete={handleLogout}
+          />
+        );
+      case "loading":
+      default:
+        return <div className='loading-container'>Loading Application...</div>;
+    }
+  };
 
-    const handleQuizFinish = () => {
-        // After finishing, go back to the quiz login page
-        window.location.hash = `#/quiz/${route.quizId}`;
-    };
-
-    const renderPage = () => {
-        if (!isAuthReady || route.page === 'loading') return <Loading />;
-
-        // If an admin is logged in, always show the dashboard, regardless of the URL
-        if (adminUser) return <AdminDashboard />;
-
-        // Otherwise, render based on the hash route
-        switch (route.page) {
-            case 'adminLogin':
-                return <AdminLogin />;
-            case 'candidateLogin':
-                return <CandidateLogin quizId={route.quizId} onLoginSuccess={handleCandidateLoginSuccess} />;
-            case 'quiz':
-                return <Quiz quizId={route.quizId} candidateId={route.candidateId} onFinish={handleQuizFinish} />;
-            default:
-                return <NotFound />;
-        }
-    };
-
-    return (
-        <div>
-            <nav className="navbar navbar-dark bg-dark sticky-top">
-                <div className="container">
-                    <span className="navbar-brand mb-0 h1">Quizegon</span>
-                    {(adminUser || route.page === 'quiz') && <button className="btn btn-sm btn-outline-secondary" onClick={handleLogout}>Logout</button>}
-                </div>
-            </nav>
-            <main className="app-container">
-                {renderPage()}
-            </main>
-        </div>
-    );
+  return <div className='app-container'>{renderPage()}</div>;
 }
+
+export default App;

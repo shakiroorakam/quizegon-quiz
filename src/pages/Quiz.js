@@ -1,248 +1,453 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { db } from '../firebase/config';
-import { collection, getDocs, doc, setDoc, Timestamp } from 'firebase/firestore';
-import Timer from '../components/quiz/Timer';
-import QuestionGrid from '../components/quiz/QuestionGrid';
-import Loading from '../components/common/Loading';
-import Modal from '../components/common/Modal';
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import { db } from "../firebase/config";
+import {
+  collection,
+  getDocs,
+  doc,
+  getDoc,
+  setDoc,
+  serverTimestamp,
+} from "firebase/firestore";
+import "./Quiz.css";
 
-// Fisher-Yates shuffle algorithm for true randomization
-const shuffleArray = (array) => {
-    let currentIndex = array.length, randomIndex;
-    while (currentIndex !== 0) {
-        randomIndex = Math.floor(Math.random() * currentIndex);
-        currentIndex--;
-        [array[currentIndex], array[randomIndex]] = [
-            array[randomIndex], array[currentIndex]];
+const Quiz = ({ quizId, candidate, onQuizComplete }) => {
+  const [quiz, setQuiz] = useState(null);
+  const [questions, setQuestions] = useState([]);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [answers, setAnswers] = useState({});
+  const [marked, setMarked] = useState([]);
+  const [timeLeft, setTimeLeft] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [showSubmitModal, setShowSubmitModal] = useState(false);
+
+  // Anti-cheating states
+  const [warnings, setWarnings] = useState(0);
+  const [showWarningModal, setShowWarningModal] = useState(false);
+
+  // Refs to hold the latest state for async functions
+  const candidateRef = useRef(candidate);
+  const answersRef = useRef(answers);
+  const submitQuizRef = useRef();
+
+  useEffect(() => {
+    candidateRef.current = candidate;
+    answersRef.current = answers;
+  }, [candidate, answers]);
+
+  // Shuffle function
+  const shuffleArray = (array) => {
+    const shuffled = [...array];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
     }
-    return array;
+    return shuffled;
+  };
+
+  const fetchQuizAndQuestions = useCallback(async () => {
+    try {
+      const quizRef = doc(db, "quizzes", quizId);
+      const quizSnap = await getDoc(quizRef);
+
+      if (!quizSnap.exists()) {
+        throw new Error("Quiz not found.");
+      }
+      const quizData = { id: quizSnap.id, ...quizSnap.data() };
+      setQuiz(quizData);
+      setTimeLeft(quizData.duration * 60);
+
+      // Fetch questions from folders
+      const foldersRef = collection(db, "quizzes", quizId, "folders");
+      const foldersSnap = await getDocs(foldersRef);
+
+      let allPoolQuestions = [];
+      let allFixedQuestions = [];
+
+      for (const folderDoc of foldersSnap.docs) {
+        const folderData = folderDoc.data();
+        const questionsRef = collection(
+          db,
+          "quizzes",
+          quizId,
+          "folders",
+          folderDoc.id,
+          "questions"
+        );
+        const questionsSnap = await getDocs(questionsRef);
+        const folderQuestions = questionsSnap.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        }));
+
+        if (folderData.name === "Pool Questions") {
+          allPoolQuestions = [...allPoolQuestions, ...folderQuestions];
+        } else if (folderData.name === "Fixed Questions") {
+          allFixedQuestions = [...allFixedQuestions, ...folderQuestions];
+        }
+      }
+
+      let finalQuestions = [];
+      const fixedCount = quizData.fixedQuestionsCount || 0;
+      const poolCount = quizData.includePoolQuestions
+        ? quizData.poolQuestionsCount || 0
+        : 0;
+
+      const selectedFixed = shuffleArray(allFixedQuestions).slice(
+        0,
+        fixedCount
+      );
+      finalQuestions.push(...selectedFixed);
+
+      if (poolCount > 0) {
+        const selectedPool = shuffleArray(allPoolQuestions).slice(0, poolCount);
+        finalQuestions.push(...selectedPool);
+      }
+
+      setQuestions(shuffleArray(finalQuestions));
+
+      if (finalQuestions.length === 0) {
+        throw new Error(
+          "No questions are available for this quiz at the moment."
+        );
+      }
+    } catch (err) {
+      console.error(err);
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [quizId]);
+
+  useEffect(() => {
+    fetchQuizAndQuestions();
+  }, [fetchQuizAndQuestions]);
+
+  const submitQuiz = useCallback(async () => {
+    const currentCandidate = candidateRef.current;
+    const currentAnswers = answersRef.current;
+
+    if (!currentCandidate || !currentCandidate.phone) {
+      console.error("Submission failed: Candidate data is missing.");
+      setError("An error occurred during submission. Missing candidate data.");
+      return;
+    }
+
+    try {
+      let score = 0;
+      if (quiz.type === "Multiple Choice") {
+        questions.forEach((q) => {
+          if (currentAnswers[q.id] === q.correctAnswer) {
+            score++;
+          }
+        });
+      } else if (quiz.type === "Descriptive") {
+        questions.forEach((q) => {
+          const submittedAnswer = currentAnswers[q.id] || "";
+          const keywordsString = q.answerParameters || "";
+          const keywords = keywordsString
+            .split(",")
+            .map((k) => k.trim().toLowerCase())
+            .filter(Boolean);
+          const candidateAnswer = submittedAnswer.toLowerCase();
+          if (
+            keywords.length > 0 &&
+            keywords.every((keyword) => candidateAnswer.includes(keyword))
+          ) {
+            score++;
+          }
+        });
+      }
+
+      const resultData = {
+        answers: currentAnswers,
+        submittedAt: serverTimestamp(),
+        startTime: currentCandidate.startTime,
+        score,
+        totalQuestions: questions.length,
+        candidateDocId: currentCandidate.id,
+      };
+
+      await setDoc(
+        doc(db, "quizzes", quizId, "results", currentCandidate.phone),
+        resultData
+      );
+      setShowSubmitModal(true);
+    } catch (err) {
+      console.error("Error submitting quiz:", err);
+      setError("There was an error submitting your quiz. Please try again.");
+    }
+  }, [quiz, questions, quizId]);
+
+  useEffect(() => {
+    submitQuizRef.current = submitQuiz;
+  }, [submitQuiz]);
+
+  useEffect(() => {
+    if (timeLeft === null || timeLeft === 0) {
+      if (timeLeft === 0) submitQuizRef.current();
+      return;
+    }
+    const intervalId = setInterval(() => {
+      setTimeLeft((prev) => prev - 1);
+    }, 1000);
+    return () => clearInterval(intervalId);
+  }, [timeLeft]);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        setWarnings((prev) => {
+          const newWarnings = prev + 1;
+          if (newWarnings >= 2) {
+            submitQuizRef.current();
+          } else {
+            setShowWarningModal(true);
+          }
+          return newWarnings;
+        });
+      }
+    };
+
+    const disableContextMenu = (e) => e.preventDefault();
+    const disableCopyPaste = (e) => e.preventDefault();
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    document.addEventListener("contextmenu", disableContextMenu);
+    document.addEventListener("copy", disableCopyPaste);
+    document.addEventListener("paste", disableCopyPaste);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      document.removeEventListener("contextmenu", disableContextMenu);
+      document.removeEventListener("copy", disableCopyPaste);
+      document.removeEventListener("paste", disableCopyPaste);
+    };
+  }, []);
+
+  const handleAnswerSelect = (questionId, answer) => {
+    setAnswers((prev) => ({ ...prev, [questionId]: answer }));
+  };
+
+  const handleMarkQuestion = () => {
+    const questionId = questions[currentQuestionIndex]?.id;
+    if (!questionId) return;
+    setMarked((prev) =>
+      prev.includes(questionId)
+        ? prev.filter((id) => id !== questionId)
+        : [...prev, questionId]
+    );
+  };
+
+  const goToNext = () => {
+    if (currentQuestionIndex < questions.length - 1) {
+      setCurrentQuestionIndex((prev) => prev + 1);
+    }
+  };
+
+  const goToPrevious = () => {
+    if (currentQuestionIndex > 0) {
+      setCurrentQuestionIndex((prev) => prev - 1);
+    }
+  };
+
+  if (loading)
+    return <div className='loading-container'>Preparing your quiz...</div>;
+  if (error) return <div className='error-container'>{error}</div>;
+
+  const currentQuestion = questions[currentQuestionIndex];
+  const minutes = Math.floor(timeLeft / 60);
+  const seconds = timeLeft % 60;
+  const isMarked = marked.includes(currentQuestion?.id);
+
+  return (
+    <div className='quiz-page-container'>
+      <header className='quiz-page-header'>
+        <h1 className='h4 m-0 fw-bold text-dark'>Meem Quiz</h1>
+        <button
+          className='btn btn-outline-secondary'
+          onClick={() => submitQuizRef.current()}
+        >
+          Logout
+        </button>
+      </header>
+
+      <div className='timer-bar'>
+        Time Left: {minutes}:{seconds < 10 ? `0${seconds}` : seconds}
+      </div>
+
+      <main className='quiz-main-content'>
+        {currentQuestion && (
+          <div className='question-card-main'>
+            <div className='question-header'>
+              <p className='question-number'>
+                Question {currentQuestionIndex + 1} of {questions.length}
+              </p>
+              <button
+                onClick={handleMarkQuestion}
+                className={`btn btn-sm ${
+                  isMarked ? "btn-warning" : "btn-outline-warning"
+                }`}
+              >
+                {isMarked ? "Unmark Question" : "Mark for Review"}
+              </button>
+            </div>
+            <h3
+              className='question-text multilingual-text'
+              style={{ whiteSpace: "pre-wrap" }}
+            >
+              {currentQuestion.questionText}
+            </h3>
+
+            {quiz.type === "Multiple Choice" ? (
+              <div className='options-grid-container'>
+                <div className='options-grid'>
+                  {currentQuestion.options.map((option, index) => (
+                    <button
+                      key={index}
+                      onClick={() =>
+                        handleAnswerSelect(currentQuestion.id, option)
+                      }
+                      className={`option-btn multilingual-text ${
+                        answers[currentQuestion.id] === option ? "selected" : ""
+                      }`}
+                    >
+                      {option}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className='descriptive-answer'>
+                <textarea
+                  rows='8'
+                  className='form-control multilingual-text'
+                  placeholder='Type your answer here...'
+                  value={answers[currentQuestion.id] || ""}
+                  onChange={(e) =>
+                    handleAnswerSelect(currentQuestion.id, e.target.value)
+                  }
+                ></textarea>
+                {currentQuestion.answerParameters && (
+                  <small className='form-text text-muted mt-2 d-block'>
+                    <strong>Keywords:</strong>{" "}
+                    {currentQuestion.answerParameters}
+                  </small>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className='quiz-navigation-footer'>
+          <button
+            onClick={goToPrevious}
+            disabled={currentQuestionIndex === 0}
+            className='btn btn-secondary nav-btn'
+          >
+            &larr; Previous
+          </button>
+          <button
+            onClick={() => submitQuizRef.current()}
+            className='btn btn-danger submit-btn'
+          >
+            Submit Quiz
+          </button>
+          <button
+            onClick={goToNext}
+            disabled={currentQuestionIndex === questions.length - 1}
+            className='btn btn-primary nav-btn'
+          >
+            Next &rarr;
+          </button>
+        </div>
+
+        <div className='question-navigation-card'>
+          <h5>Question Navigation</h5>
+          <div className='question-grid'>
+            {questions.map((q, index) => {
+              const isCurrent = index === currentQuestionIndex;
+              const isAnswered = !!answers[q.id];
+              const isMarkedForReview = marked.includes(q.id);
+
+              const statusClasses = ["grid-item"];
+              if (isCurrent) statusClasses.push("current");
+              else if (isAnswered) statusClasses.push("answered");
+
+              if (isMarkedForReview) statusClasses.push("marked");
+
+              return (
+                <button
+                  key={q.id}
+                  onClick={() => setCurrentQuestionIndex(index)}
+                  className={statusClasses.join(" ")}
+                >
+                  {index + 1}
+                </button>
+              );
+            })}
+          </div>
+          <div className='legend'>
+            <span className='legend-item answered'>Answered</span>
+            <span className='legend-item not-answered'>Not Answered</span>
+            <span className='legend-item current'>Current</span>
+            <span className='legend-item marked'>Marked for Review</span>
+          </div>
+        </div>
+      </main>
+
+      {showSubmitModal && (
+        <div className='modal show' style={{ display: "block" }}>
+          <div className='modal-dialog'>
+            <div className='modal-content'>
+              <div className='modal-header'>
+                <h5 className='modal-title'>Submission Successful</h5>
+              </div>
+              <div className='modal-body'>
+                <p>Your quiz has been successfully submitted.</p>
+              </div>
+              <div className='modal-footer'>
+                <button
+                  type='button'
+                  className='btn btn-primary'
+                  onClick={onQuizComplete}
+                >
+                  OK
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showWarningModal && (
+        <div className='modal show' style={{ display: "block" }}>
+          <div className='modal-dialog'>
+            <div className='modal-content'>
+              <div className='modal-header'>
+                <h5 className='modal-title text-warning'>Warning</h5>
+              </div>
+              <div className='modal-body'>
+                <p>
+                  You have switched tabs. Switching again will result in
+                  automatic submission of your quiz.
+                </p>
+              </div>
+              <div className='modal-footer'>
+                <button
+                  type='button'
+                  className='btn btn-warning'
+                  onClick={() => setShowWarningModal(false)}
+                >
+                  I Understand
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 };
 
-export default function Quiz({ quizId, candidateId, onFinish }) {
-    const [questions, setQuestions] = useState([]);
-    const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-    const [answers, setAnswers] = useState({});
-    const [isLoading, setIsLoading] = useState(true);
-    const [showSuccessModal, setShowSuccessModal] = useState(false);
-    const [quizStartTime, setQuizStartTime] = useState(null);
-    
-    const [showWarningModal, setShowWarningModal] = useState(false);
-    const [warningMessage, setWarningMessage] = useState('');
-    const tabSwitchCount = useRef(0);
-    
-    const onFinishRef = useRef(onFinish);
-    useEffect(() => {
-        onFinishRef.current = onFinish;
-    }, [onFinish]);
-
-    // --- FIX: Use a ref to hold the latest version of the submit function ---
-    const handleSubmitQuizRef = useRef();
-
-    const handleSubmitQuiz = useCallback(async () => {
-        if (!candidateId || !questions.length) return;
-
-        let score = 0;
-        questions.forEach(q => {
-            if (answers[q.id] && answers[q.id] === q.answer) {
-                score++;
-            }
-        });
-
-        try {
-            const resultDocRef = doc(db, 'quizzes', quizId, 'results', candidateId);
-            await setDoc(resultDocRef, {
-                answers,
-                score,
-                totalQuestions: questions.length,
-                startTime: Timestamp.fromDate(quizStartTime),
-                submittedAt: Timestamp.now()
-            });
-            setShowSuccessModal(true);
-        } catch (error) {
-            console.error("Error submitting quiz results:", error);
-            alert("There was an error submitting your quiz.");
-        }
-    }, [quizId, candidateId, questions, answers, quizStartTime]);
-
-    // --- FIX: Keep the ref updated with the latest version of the function ---
-    useEffect(() => {
-        handleSubmitQuizRef.current = handleSubmitQuiz;
-    }, [handleSubmitQuiz]);
-
-    // --- ANTI-CHEATING FEATURES ---
-    useEffect(() => {
-        const handleVisibilityChange = () => {
-            if (document.hidden) {
-                tabSwitchCount.current += 1;
-                if (tabSwitchCount.current === 1) {
-                    setWarningMessage('You have switched tabs. This is the first and final warning. Switching tabs again will result in automatic submission of your quiz.');
-                    setShowWarningModal(true);
-                } else if (tabSwitchCount.current >= 2) {
-                    // Call the function from the ref to ensure it has the latest state
-                    handleSubmitQuizRef.current();
-                }
-            }
-        };
-
-        const preventAction = (e) => {
-            e.preventDefault();
-            setWarningMessage('This action is disabled during the quiz.');
-            setShowWarningModal(true);
-        };
-
-        document.addEventListener('visibilitychange', handleVisibilityChange);
-        document.addEventListener('contextmenu', preventAction);
-        document.addEventListener('copy', preventAction);
-        document.addEventListener('paste', preventAction);
-
-        return () => {
-            document.removeEventListener('visibilitychange', handleVisibilityChange);
-            document.removeEventListener('contextmenu', preventAction);
-            document.removeEventListener('copy', preventAction);
-            document.removeEventListener('paste', preventAction);
-        };
-    }, []); // This useEffect should only run once
-
-    useEffect(() => {
-        const fetchQuestions = async () => {
-            try {
-                const foldersRef = collection(db, 'quizzes', quizId, 'questionFolders');
-                const foldersSnapshot = await getDocs(foldersRef);
-
-                let allPoolQuestions = [];
-                let allFixedQuestions = [];
-
-                await Promise.all(foldersSnapshot.docs.map(async (folderDoc) => {
-                    const folderData = folderDoc.data();
-                    const questionsRef = collection(db, 'quizzes', quizId, 'questionFolders', folderDoc.id, 'questions');
-                    const questionsSnapshot = await getDocs(questionsRef);
-                    const folderQuestions = questionsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-
-                    if (folderData.type === 'pool') {
-                        allPoolQuestions = [...allPoolQuestions, ...folderQuestions];
-                    } else if (folderData.type === 'fixed') {
-                        allFixedQuestions = [...allFixedQuestions, ...folderQuestions];
-                    }
-                }));
-
-                const shuffledPool = shuffleArray(allPoolQuestions);
-                const selectedPoolQuestions = shuffledPool.slice(0, 20);
-                const selectedFixedQuestions = allFixedQuestions.slice(0, 10);
-                
-                const combinedQuestions = [...selectedFixedQuestions, ...selectedPoolQuestions];
-                const finalQuestions = shuffleArray(combinedQuestions);
-
-                setQuestions(finalQuestions);
-                setQuizStartTime(new Date());
-            } catch (error) {
-                console.error("Error fetching questions:", error);
-                alert("Could not load the quiz questions. Please try again later.");
-            } finally {
-                setIsLoading(false);
-            }
-        };
-
-        if (quizId) {
-            fetchQuestions();
-        }
-    }, [quizId]);
-
-    const handleSelectOption = (questionId, option) => {
-        setAnswers(prev => ({ ...prev, [questionId]: option }));
-    };
-    
-    const handleNext = () => {
-        if (currentQuestionIndex < questions.length - 1) {
-            setCurrentQuestionIndex(prev => prev + 1);
-        }
-    };
-    
-    const handlePrev = () => {
-        if (currentQuestionIndex > 0) {
-            setCurrentQuestionIndex(prev => prev - 1);
-        }
-    };
-
-    if (isLoading) {
-        return <Loading text="Preparing your quiz..." />;
-    }
-    
-    if (!questions.length) {
-        return <div className="text-center"><h2>No questions are available for this quiz at the moment.</h2></div>;
-    }
-
-    const currentQuestion = questions[currentQuestionIndex];
-
-    return (
-        <div>
-            {showSuccessModal && (
-                <Modal onClose={() => onFinishRef.current()} title="Submission Successful">
-                    <p>Your quiz has been submitted successfully.</p>
-                    <button className="btn btn-primary" onClick={() => onFinishRef.current()}>
-                        OK
-                    </button>
-                </Modal>
-            )}
-
-            {showWarningModal && (
-                <Modal onClose={() => setShowWarningModal(false)} title="Warning">
-                    <p>{warningMessage}</p>
-                    <button className="btn btn-warning" onClick={() => setShowWarningModal(false)}>
-                        I Understand
-                    </button>
-                </Modal>
-            )}
-
-            <Timer duration={15 * 60} onTimeUp={handleSubmitQuiz} />
-            <div className="card my-4">
-                <div className="card-header d-flex justify-content-between">
-                    <span>Question {currentQuestionIndex + 1} of {questions.length}</span>
-                </div>
-                <div className="card-body p-4">
-                    <h4 className="card-title mb-5 text-center" style={{minHeight: '60px'}}>{currentQuestion.text}</h4>
-                    
-                    <div className="d-flex justify-content-center">
-                        <div className="row g-3" style={{ maxWidth: '600px' }}>
-                            {currentQuestion.options.map((option, i) => (
-                                <div key={i} className="col-6">
-                                    <button 
-                                        className={`btn w-100 p-3 d-flex align-items-center justify-content-center ${answers[currentQuestion.id] === option ? 'btn-primary' : 'btn-outline-primary'}`}
-                                        onClick={() => handleSelectOption(currentQuestion.id, option)}
-                                        style={{
-                                            whiteSpace: 'normal', 
-                                            lineHeight: '1.3',
-                                            minHeight: '90px'
-                                        }}
-                                    >
-                                        {option}
-                                    </button>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                </div>
-            </div>
-            
-            <div className="mb-4">
-                <div className="d-flex justify-content-between">
-                    <button className="btn btn-secondary" onClick={handlePrev} disabled={currentQuestionIndex === 0}>&larr; Previous</button>
-                    <button className="btn btn-primary" onClick={handleNext} disabled={currentQuestionIndex === questions.length - 1}>Next &rarr;</button>
-                </div>
-                <div className="text-center mt-3">
-                    <button className="btn btn-danger btn-lg" onClick={() => {
-                        if (window.confirm("Are you sure you want to submit the quiz? You cannot make changes after this.")) {
-                            handleSubmitQuiz();
-                        }
-                    }}>Submit Quiz</button>
-                </div>
-            </div>
-
-            <QuestionGrid 
-                questions={questions}
-                answers={answers}
-                currentIndex={currentQuestionIndex}
-                onSelectQuestion={setCurrentQuestionIndex}
-            />
-        </div>
-    );
-}
+export default Quiz;
