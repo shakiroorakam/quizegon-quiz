@@ -1,5 +1,6 @@
 {
   "name": "meem-quiz",
+  "homepage": "https://shakiroorakam.github.io/quizegon-quiz",
   "version": "0.1.0",
   "private": true,
   "dependencies": {
