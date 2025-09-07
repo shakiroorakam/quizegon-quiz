@@ -14,10 +14,6 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
     const [error, setError] = useState('');
     const [showSubmitModal, setShowSubmitModal] = useState(false);
     
-    // Anti-cheating states
-    const [warnings, setWarnings] = useState(0);
-    const [showWarningModal, setShowWarningModal] = useState(false);
-    
     // Refs and State for up-to-date data
     const [freshCandidateData, setFreshCandidateData] = useState(null);
     const answersRef = useRef(answers);
@@ -27,7 +23,7 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
         answersRef.current = answers;
     }, [answers]);
 
-    // --- FIX: Fetch the latest candidate data on load to get server-set values like startTime ---
+    // Fetch the latest candidate data on load to get server-set values like startTime
     useEffect(() => {
         const fetchFreshCandidateData = async () => {
             if (!quizId || !candidate?.id) return;
@@ -163,34 +159,6 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
         return () => clearInterval(intervalId);
     }, [timeLeft]);
 
-    useEffect(() => {
-        const handleVisibilityChange = () => {
-            if (document.hidden) {
-                setWarnings(prev => {
-                    const newWarnings = prev + 1;
-                    if (newWarnings >= 2) submitQuizRef.current();
-                    else setShowWarningModal(true);
-                    return newWarnings;
-                });
-            }
-        };
-
-        const disableContextMenu = (e) => e.preventDefault();
-        const disableCopyPaste = (e) => e.preventDefault();
-
-        document.addEventListener('visibilitychange', handleVisibilityChange);
-        document.addEventListener('contextmenu', disableContextMenu);
-        document.addEventListener('copy', disableCopyPaste);
-        document.addEventListener('paste', disableCopyPaste);
-
-        return () => {
-            document.removeEventListener('visibilitychange', handleVisibilityChange);
-            document.removeEventListener('contextmenu', disableContextMenu);
-            document.removeEventListener('copy', disableCopyPaste);
-            document.removeEventListener('paste', disableCopyPaste);
-        };
-    }, []);
-
     const handleAnswerSelect = (questionId, answer) => setAnswers(prev => ({ ...prev, [questionId]: answer }));
     const handleMarkQuestion = () => {
         const questionId = questions[currentQuestionIndex]?.id;
@@ -291,20 +259,9 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
                     </div>
                 </div>
             )}
-
-            {showWarningModal && (
-                <div className="modal show" style={{ display: 'block' }}>
-                    <div className="modal-dialog">
-                        <div className="modal-content">
-                             <div className="modal-header"><h5 className="modal-title text-warning">Warning</h5></div>
-                            <div className="modal-body"><p>You have switched tabs. Switching again will result in automatic submission of your quiz.</p></div>
-                            <div className="modal-footer"><button type="button" className="btn btn-warning" onClick={() => setShowWarningModal(false)}>I Understand</button></div>
-                        </div>
-                    </div>
-                </div>
-            )}
         </div>
     );
 };
 
 export default Quiz;
+
