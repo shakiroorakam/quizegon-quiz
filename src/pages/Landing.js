@@ -6,7 +6,7 @@ export default function Landing({ setPage }) {
       className='d-flex flex-column align-items-center justify-content-center'
       style={{ height: "70vh" }}
     >
-      <h1 className='mb-4'>Welcome to Meem Quiz</h1>
+      <h1 className='mb-4'>Welcome to Quizegon</h1>
       <p className='lead mb-5'>Please select your login type.</p>
       <div className='d-grid gap-3 col-6 mx-auto'>
         <button

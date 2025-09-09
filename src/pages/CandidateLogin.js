@@ -99,12 +99,10 @@ const CandidateLogin = ({ quizId, onLoginSuccess }) => {
                      return;
                  }
                 
-                // --- THIS IS THE FIX ---
-                // Save the server timestamp as the official start time.
                 const candidateDocRef = doc(db, 'quizzes', quizId, 'candidates', candidateFound.id);
                 await updateDoc(candidateDocRef, { 
                     status: 'attending',
-                    startTime: serverTimestamp() // Use the server's clock
+                    startTime: serverTimestamp()
                 });
                 
                 setCandidateData(candidateFound);
@@ -121,8 +119,6 @@ const CandidateLogin = ({ quizId, onLoginSuccess }) => {
     };
     
     const handleStartQuiz = () => {
-        // We no longer need to pass the start time from here.
-        // The Quiz component will fetch the server-set startTime from the candidate data.
         onLoginSuccess(candidateData);
     };
 
@@ -141,15 +137,11 @@ const CandidateLogin = ({ quizId, onLoginSuccess }) => {
                         <p><strong>Phone Number:</strong> {candidateData.phone}</p>
                     </div>
                     <hr />
-                    <h4 className="text-center">Quiz Guidelines</h4>
-                    <ul className="guidelines">
-                        <li>The quiz duration is <strong>{quiz.duration} minutes</strong>.</li>
-                        <li>Do not switch tabs or windows. Doing so twice will automatically submit your quiz.</li>
-                        <li>Copying, pasting, and right-clicking are disabled.</li>
-                        <li>Ensure you have a stable internet connection.</li>
-                        <li>Click "Start Quiz" when you are ready to begin. The timer will start immediately.</li>
-                    </ul>
-                    <button onClick={handleStartQuiz} className="btn btn-success btn-lg w-100 mt-3">
+                    <h4 className="text-center">Quiz Instructions</h4>
+                    <div className="instructions-box p-3 bg-light rounded" style={{ whiteSpace: 'pre-wrap', textAlign: 'left', maxHeight: '250px', overflowY: 'auto' }}>
+                        {quiz.instructions}
+                    </div>
+                    <button onClick={handleStartQuiz} className="btn btn-success btn-lg w-100 mt-4">
                         Start Quiz
                     </button>
                 </div>
@@ -196,4 +188,3 @@ const CandidateLogin = ({ quizId, onLoginSuccess }) => {
 };
 
 export default CandidateLogin;
-

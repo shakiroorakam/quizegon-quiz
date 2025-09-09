@@ -13,8 +13,7 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [showSubmitModal, setShowSubmitModal] = useState(false);
-    
-    // Refs and State for up-to-date data
+
     const [freshCandidateData, setFreshCandidateData] = useState(null);
     const answersRef = useRef(answers);
     const submitQuizRef = useRef();
@@ -23,7 +22,6 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
         answersRef.current = answers;
     }, [answers]);
 
-    // Fetch the latest candidate data on load to get server-set values like startTime
     useEffect(() => {
         const fetchFreshCandidateData = async () => {
             if (!quizId || !candidate?.id) return;
@@ -41,8 +39,6 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
         fetchFreshCandidateData();
     }, [quizId, candidate]);
 
-
-    // Shuffle function
     const shuffleArray = (array) => {
         const shuffled = [...array];
         for (let i = shuffled.length - 1; i > 0; i--) {
@@ -102,7 +98,7 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
     }, [fetchQuizAndQuestions]);
     
     const submitQuiz = useCallback(async () => {
-        const currentCandidate = freshCandidateData; // Use the fresh data
+        const currentCandidate = freshCandidateData;
         const currentAnswers = answersRef.current;
         
         if (!currentCandidate || !currentCandidate.phone || !currentCandidate.startTime) {
@@ -113,25 +109,42 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
 
         try {
             let score = 0;
-            if (quiz.type === 'Multiple Choice') {
-                questions.forEach(q => {
-                    if (currentAnswers[q.id] === q.correctAnswer) score++;
-                });
-            } else if (quiz.type === 'Descriptive') {
-                 questions.forEach(q => {
-                    const submittedAnswer = currentAnswers[q.id] || "";
+            let totalPossibleScore = 0;
+            let priorityScore = 0;
+            const answeredCount = Object.keys(currentAnswers).filter(key => currentAnswers[key]).length;
+
+            questions.forEach(q => {
+                const questionScore = q.score || 1;
+                totalPossibleScore += questionScore;
+                
+                let isCorrect = false;
+                const submittedAnswer = currentAnswers[q.id] || "";
+                
+                if (quiz.type === 'Multiple Choice') {
+                    if (submittedAnswer === q.correctAnswer) isCorrect = true;
+                } else if (quiz.type === 'Descriptive') {
                     const keywordsString = q.answerParameters || "";
                     const keywords = keywordsString.split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
                     const candidateAnswer = submittedAnswer.toLowerCase();
-                    if (keywords.length > 0 && keywords.every(keyword => candidateAnswer.includes(keyword))) score++;
-                });
-            }
+                    if (keywords.length > 0 && keywords.every(keyword => candidateAnswer.includes(keyword))) isCorrect = true;
+                }
+                
+                if (isCorrect) {
+                    score += questionScore;
+                    if (q.isPriority) {
+                        priorityScore += questionScore;
+                    }
+                }
+            });
     
             const resultData = {
                 answers: currentAnswers,
                 submittedAt: serverTimestamp(),
-                startTime: currentCandidate.startTime, // This is now guaranteed to be the server timestamp
+                startTime: currentCandidate.startTime,
                 score,
+                totalPossibleScore,
+                priorityScore,
+                answeredCount,
                 totalQuestions: questions.length,
                 candidateDocId: currentCandidate.id 
             };
@@ -143,12 +156,11 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
             console.error("Error submitting quiz:", err);
             setError("There was an error submitting your quiz. Please try again.");
         }
-    }, [quiz, questions, quizId, freshCandidateData]); // Depend on fresh data
+    }, [quiz, questions, quizId, freshCandidateData]);
 
     useEffect(() => {
         submitQuizRef.current = submitQuiz;
     }, [submitQuiz]);
-
 
     useEffect(() => {
         if (timeLeft === null || timeLeft === 0) {
@@ -193,7 +205,12 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
                 {currentQuestion && (
                      <div className="question-card-main">
                         <div className="question-header">
-                            <p className="question-number">Question {currentQuestionIndex + 1} of {questions.length}</p>
+                            <p className="question-number">
+                                Question {currentQuestionIndex + 1} of {questions.length}
+                                {currentQuestion.isPriority && (
+                                    <span className="priority-indicator" title="High Priority Question">⭐</span>
+                                )}
+                            </p>
                             <button onClick={handleMarkQuestion} className={`btn btn-sm ${isMarked ? 'btn-warning' : 'btn-outline-warning'}`}>
                                 {isMarked ? 'Unmark Question' : 'Mark for Review'}
                             </button>
