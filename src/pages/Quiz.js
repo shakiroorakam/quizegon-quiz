@@ -3,7 +3,19 @@ import { db } from '../firebase/config';
 import { collection, getDocs, doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import './Quiz.css';
 
+// --- THIS IS THE FIX ---
+// Define the shuffleArray helper function outside the component.
+const shuffleArray = (array) => {
+    const shuffled = [...array];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
+};
+
 const Quiz = ({ quizId, candidate, onQuizComplete }) => {
+    const [quiz, setQuiz] = useState(null);
     const [questions, setQuestions] = useState([]);
     const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
     const [answers, setAnswers] = useState({});
@@ -13,20 +25,17 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
     const [error, setError] = useState('');
     const [showSubmitModal, setShowSubmitModal] = useState(false);
 
-    // --- THIS IS THE FIX ---
-    // Use refs for all data that needs to be accessed by async callbacks (like the timer).
-    // This ensures the callbacks always have the latest data, avoiding race conditions.
     const candidateRef = useRef(candidate);
     const answersRef = useRef(answers);
     const quizRef = useRef(null);
     const questionsRef = useRef(questions);
     const submitQuizRef = useRef();
 
-    // Keep refs synchronized with the latest state
     useEffect(() => {
         answersRef.current = answers;
+        quizRef.current = quiz;
         questionsRef.current = questions;
-    }, [answers, questions]);
+    }, [answers, quiz, questions]);
 
     const fetchQuizAndQuestions = useCallback(async () => {
         try {
@@ -36,7 +45,7 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
             if (!quizSnap.exists()) throw new Error("Quiz not found.");
             
             const quizData = { id: quizSnap.id, ...quizSnap.data() };
-            quizRef.current = quizData; // Store in ref
+            setQuiz(quizData);
             setTimeLeft(quizData.duration * 60);
 
             const foldersRef = collection(db, 'quizzes', quizId, 'folders');
@@ -76,7 +85,6 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
         fetchQuizAndQuestions();
     }, [fetchQuizAndQuestions]);
     
-    // Define the submit function once and keep it in a ref
     useEffect(() => {
         submitQuizRef.current = async () => {
             const currentCandidate = candidateRef.current;
@@ -140,9 +148,8 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
                 setError("There was an error submitting your quiz. Please try again.");
             }
         };
-    }, [quizId]); // Only needs quizId to form the correct path
+    }, [quizId]);
 
-    // Timer countdown
     useEffect(() => {
         if (timeLeft === null) return;
         if (timeLeft === 0) {
@@ -262,4 +269,3 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
 };
 
 export default Quiz;
-
