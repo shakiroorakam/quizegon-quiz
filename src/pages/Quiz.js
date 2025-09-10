@@ -13,7 +13,7 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [showSubmitModal, setShowSubmitModal] = useState(false);
-
+    
     const [freshCandidateData, setFreshCandidateData] = useState(null);
     const answersRef = useRef(answers);
     const submitQuizRef = useRef();
@@ -21,7 +21,7 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
     useEffect(() => {
         answersRef.current = answers;
     }, [answers]);
-
+    
     useEffect(() => {
         const fetchFreshCandidateData = async () => {
             if (!quizId || !candidate?.id) return;
@@ -228,7 +228,6 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
                         ) : (
                             <div className="descriptive-answer">
                                  <textarea rows="8" className="form-control multilingual-text" placeholder="Type your answer here..." value={answers[currentQuestion.id] || ''} onChange={(e) => handleAnswerSelect(currentQuestion.id, e.target.value)}></textarea>
-                                {currentQuestion.answerParameters && (<small className="form-text text-muted mt-2 d-block"><strong>Keywords:</strong> {currentQuestion.answerParameters}</small>)}
                             </div>
                         )}
                      </div>
@@ -281,4 +280,3 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
 };
 
 export default Quiz;
-
