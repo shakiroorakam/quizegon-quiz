@@ -4,7 +4,6 @@ import { collection, getDocs, doc, getDoc, setDoc, serverTimestamp } from 'fireb
 import './Quiz.css';
 
 const Quiz = ({ quizId, candidate, onQuizComplete }) => {
-    const [quiz, setQuiz] = useState(null);
     const [questions, setQuestions] = useState([]);
     const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
     const [answers, setAnswers] = useState({});
@@ -15,46 +14,19 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
     const [showSubmitModal, setShowSubmitModal] = useState(false);
 
     // --- THIS IS THE FIX ---
-    // Use refs for all data that needs to be accessed by async callbacks (like the timer)
+    // Use refs for all data that needs to be accessed by async callbacks (like the timer).
     // This ensures the callbacks always have the latest data, avoiding race conditions.
-    const freshCandidateDataRef = useRef(null);
+    const candidateRef = useRef(candidate);
     const answersRef = useRef(answers);
-    const quizRef = useRef(quiz);
+    const quizRef = useRef(null);
     const questionsRef = useRef(questions);
     const submitQuizRef = useRef();
 
+    // Keep refs synchronized with the latest state
     useEffect(() => {
         answersRef.current = answers;
-        quizRef.current = quiz;
         questionsRef.current = questions;
-    }, [answers, quiz, questions]);
-    
-    // Fetch the latest candidate data on load to get server-set values like startTime
-    useEffect(() => {
-        const fetchFreshCandidateData = async () => {
-            if (!quizId || !candidate?.id) return;
-            try {
-                const candidateDocRef = doc(db, 'quizzes', quizId, 'candidates', candidate.id);
-                const docSnap = await getDoc(candidateDocRef);
-                if (docSnap.exists()) {
-                    freshCandidateDataRef.current = { id: docSnap.id, ...docSnap.data() };
-                }
-            } catch (error) {
-                console.error("Error fetching fresh candidate data:", error);
-                setError("Could not load your session details. Please try refreshing.");
-            }
-        };
-        fetchFreshCandidateData();
-    }, [quizId, candidate]);
-
-    const shuffleArray = (array) => {
-        const shuffled = [...array];
-        for (let i = shuffled.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-        }
-        return shuffled;
-    };
+    }, [answers, questions]);
 
     const fetchQuizAndQuestions = useCallback(async () => {
         try {
@@ -64,7 +36,7 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
             if (!quizSnap.exists()) throw new Error("Quiz not found.");
             
             const quizData = { id: quizSnap.id, ...quizSnap.data() };
-            setQuiz(quizData);
+            quizRef.current = quizData; // Store in ref
             setTimeLeft(quizData.duration * 60);
 
             const foldersRef = collection(db, 'quizzes', quizId, 'folders');
@@ -94,7 +66,6 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
             if (finalQuestions.length === 0) throw new Error("No questions are available for this quiz at the moment.");
 
         } catch (err) {
-            console.error(err);
             setError(err.message);
         } finally {
             setLoading(false);
@@ -108,7 +79,7 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
     // Define the submit function once and keep it in a ref
     useEffect(() => {
         submitQuizRef.current = async () => {
-            const currentCandidate = freshCandidateDataRef.current;
+            const currentCandidate = candidateRef.current;
             const currentAnswers = answersRef.current;
             const currentQuiz = quizRef.current;
             const currentQuestions = questionsRef.current;
@@ -177,7 +148,7 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
         if (timeLeft === 0) {
             submitQuizRef.current?.();
             return;
-        };
+        }
         const intervalId = setInterval(() => setTimeLeft(prev => prev - 1), 1000);
         return () => clearInterval(intervalId);
     }, [timeLeft]);
@@ -228,7 +199,7 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
                         </div>
                         <h3 className="question-text multilingual-text" style={{ whiteSpace: 'pre-wrap' }}>{currentQuestion.questionText}</h3>
                         
-                        {quiz.type === 'Multiple Choice' ? (
+                        {quizRef.current?.type === 'Multiple Choice' ? (
                             <div className="options-grid-container">
                                 <div className="options-grid">
                                     {currentQuestion.options.map((option, index) => (
