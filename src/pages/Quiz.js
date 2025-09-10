@@ -13,23 +13,31 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [showSubmitModal, setShowSubmitModal] = useState(false);
-    
-    const [freshCandidateData, setFreshCandidateData] = useState(null);
+
+    // --- THIS IS THE FIX ---
+    // Use refs for all data that needs to be accessed by async callbacks (like the timer)
+    // This ensures the callbacks always have the latest data, avoiding race conditions.
+    const freshCandidateDataRef = useRef(null);
     const answersRef = useRef(answers);
+    const quizRef = useRef(quiz);
+    const questionsRef = useRef(questions);
     const submitQuizRef = useRef();
 
     useEffect(() => {
         answersRef.current = answers;
-    }, [answers]);
+        quizRef.current = quiz;
+        questionsRef.current = questions;
+    }, [answers, quiz, questions]);
     
+    // Fetch the latest candidate data on load to get server-set values like startTime
     useEffect(() => {
         const fetchFreshCandidateData = async () => {
             if (!quizId || !candidate?.id) return;
             try {
-                const candidateRef = doc(db, 'quizzes', quizId, 'candidates', candidate.id);
-                const docSnap = await getDoc(candidateRef);
+                const candidateDocRef = doc(db, 'quizzes', quizId, 'candidates', candidate.id);
+                const docSnap = await getDoc(candidateDocRef);
                 if (docSnap.exists()) {
-                    setFreshCandidateData({ id: docSnap.id, ...docSnap.data() });
+                    freshCandidateDataRef.current = { id: docSnap.id, ...docSnap.data() };
                 }
             } catch (error) {
                 console.error("Error fetching fresh candidate data:", error);
@@ -50,8 +58,8 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
 
     const fetchQuizAndQuestions = useCallback(async () => {
         try {
-            const quizRef = doc(db, 'quizzes', quizId);
-            const quizSnap = await getDoc(quizRef);
+            const quizDocRef = doc(db, 'quizzes', quizId);
+            const quizSnap = await getDoc(quizDocRef);
 
             if (!quizSnap.exists()) throw new Error("Quiz not found.");
             
@@ -66,8 +74,8 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
             let allFixedQuestions = [];
 
             for (const folderDoc of foldersSnap.docs) {
-                const questionsRef = collection(db, 'quizzes', quizId, 'folders', folderDoc.id, 'questions');
-                const questionsSnap = await getDocs(questionsRef);
+                const questionsColRef = collection(db, 'quizzes', quizId, 'folders', folderDoc.id, 'questions');
+                const questionsSnap = await getDocs(questionsColRef);
                 const folderQuestions = questionsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
                 if (folderDoc.data().name === 'Pool Questions') allPoolQuestions.push(...folderQuestions);
@@ -97,74 +105,77 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
         fetchQuizAndQuestions();
     }, [fetchQuizAndQuestions]);
     
-    const submitQuiz = useCallback(async () => {
-        const currentCandidate = freshCandidateData;
-        const currentAnswers = answersRef.current;
-        
-        if (!currentCandidate || !currentCandidate.phone || !currentCandidate.startTime) {
-            console.error("Submission failed: Candidate data or start time is missing.", currentCandidate);
-            setError("An error occurred during submission. Missing essential data.");
-            return;
-        }
-
-        try {
-            let score = 0;
-            let totalPossibleScore = 0;
-            let priorityScore = 0;
-            const answeredCount = Object.keys(currentAnswers).filter(key => currentAnswers[key]).length;
-
-            questions.forEach(q => {
-                const questionScore = q.score || 1;
-                totalPossibleScore += questionScore;
-                
-                let isCorrect = false;
-                const submittedAnswer = currentAnswers[q.id] || "";
-                
-                if (quiz.type === 'Multiple Choice') {
-                    if (submittedAnswer === q.correctAnswer) isCorrect = true;
-                } else if (quiz.type === 'Descriptive') {
-                    const keywordsString = q.answerParameters || "";
-                    const keywords = keywordsString.split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
-                    const candidateAnswer = submittedAnswer.toLowerCase();
-                    if (keywords.length > 0 && keywords.every(keyword => candidateAnswer.includes(keyword))) isCorrect = true;
-                }
-                
-                if (isCorrect) {
-                    score += questionScore;
-                    if (q.isPriority) {
-                        priorityScore += questionScore;
-                    }
-                }
-            });
-    
-            const resultData = {
-                answers: currentAnswers,
-                submittedAt: serverTimestamp(),
-                startTime: currentCandidate.startTime,
-                score,
-                totalPossibleScore,
-                priorityScore,
-                answeredCount,
-                totalQuestions: questions.length,
-                candidateDocId: currentCandidate.id 
-            };
+    // Define the submit function once and keep it in a ref
+    useEffect(() => {
+        submitQuizRef.current = async () => {
+            const currentCandidate = freshCandidateDataRef.current;
+            const currentAnswers = answersRef.current;
+            const currentQuiz = quizRef.current;
+            const currentQuestions = questionsRef.current;
             
-            await setDoc(doc(db, 'quizzes', quizId, 'results', currentCandidate.phone), resultData);
-            setShowSubmitModal(true);
-    
-        } catch (err) {
-            console.error("Error submitting quiz:", err);
-            setError("There was an error submitting your quiz. Please try again.");
-        }
-    }, [quiz, questions, quizId, freshCandidateData]);
+            if (!currentCandidate || !currentCandidate.phone || !currentCandidate.startTime) {
+                console.error("Submission failed: Candidate data or start time is missing.", currentCandidate);
+                setError("An error occurred during submission. Missing essential data.");
+                return;
+            }
 
-    useEffect(() => {
-        submitQuizRef.current = submitQuiz;
-    }, [submitQuiz]);
+            try {
+                let score = 0;
+                let totalPossibleScore = 0;
+                let priorityScore = 0;
+                const answeredCount = Object.keys(currentAnswers).filter(key => currentAnswers[key]).length;
 
+                currentQuestions.forEach(q => {
+                    const questionScore = q.score || 1;
+                    totalPossibleScore += questionScore;
+                    
+                    let isCorrect = false;
+                    const submittedAnswer = currentAnswers[q.id] || "";
+                    
+                    if (currentQuiz.type === 'Multiple Choice') {
+                        if (submittedAnswer === q.correctAnswer) isCorrect = true;
+                    } else if (currentQuiz.type === 'Descriptive') {
+                        const keywordsString = q.answerParameters || "";
+                        const keywords = keywordsString.split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
+                        const candidateAnswer = submittedAnswer.toLowerCase();
+                        if (keywords.length > 0 && keywords.every(keyword => candidateAnswer.includes(keyword))) isCorrect = true;
+                    }
+                    
+                    if (isCorrect) {
+                        score += questionScore;
+                        if (q.isPriority) {
+                            priorityScore += questionScore;
+                        }
+                    }
+                });
+        
+                const resultData = {
+                    answers: currentAnswers,
+                    submittedAt: serverTimestamp(),
+                    startTime: currentCandidate.startTime,
+                    score,
+                    totalPossibleScore,
+                    priorityScore,
+                    answeredCount,
+                    totalQuestions: currentQuestions.length,
+                    candidateDocId: currentCandidate.id 
+                };
+                
+                await setDoc(doc(db, 'quizzes', quizId, 'results', currentCandidate.phone), resultData);
+                setShowSubmitModal(true);
+        
+            } catch (err) {
+                console.error("Error submitting quiz:", err);
+                setError("There was an error submitting your quiz. Please try again.");
+            }
+        };
+    }, [quizId]); // Only needs quizId to form the correct path
+
+    // Timer countdown
     useEffect(() => {
-        if (timeLeft === null || timeLeft === 0) {
-            if (timeLeft === 0) submitQuizRef.current();
+        if (timeLeft === null) return;
+        if (timeLeft === 0) {
+            submitQuizRef.current?.();
             return;
         };
         const intervalId = setInterval(() => setTimeLeft(prev => prev - 1), 1000);
@@ -184,7 +195,7 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
         if (currentQuestionIndex > 0) setCurrentQuestionIndex(prev => prev - 1);
     };
 
-    if (loading || !freshCandidateData) return <div className="loading-container">Preparing your quiz...</div>;
+    if (loading) return <div className="loading-container">Preparing your quiz...</div>;
     if (error) return <div className="error-container">{error}</div>;
 
     const currentQuestion = questions[currentQuestionIndex];
@@ -196,7 +207,7 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
         <div className="quiz-page-container">
             <header className="quiz-page-header">
                 <h1 className="h4 m-0 fw-bold text-dark">Quizegon</h1>
-                <button className="btn btn-outline-secondary" onClick={() => submitQuizRef.current()}>Logout</button>
+                <button className="btn btn-outline-secondary" onClick={() => submitQuizRef.current?.()}>Logout</button>
             </header>
             
             <div className="timer-bar">Time Left: {minutes}:{seconds < 10 ? `0${seconds}` : seconds}</div>
@@ -238,7 +249,7 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
                         <button onClick={goToPrevious} disabled={currentQuestionIndex === 0} className="btn btn-secondary nav-btn">&larr; Previous</button>
                         <button onClick={goToNext} disabled={currentQuestionIndex === questions.length - 1} className="btn btn-primary nav-btn">Next &rarr;</button>
                     </div>
-                    <button onClick={() => submitQuizRef.current()} className="btn btn-danger submit-btn">Submit Quiz</button>
+                    <button onClick={() => submitQuizRef.current?.()} className="btn btn-danger submit-btn">Submit Quiz</button>
                 </div>
 
                 <div className="question-navigation-card">
@@ -280,3 +291,4 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
 };
 
 export default Quiz;
+
