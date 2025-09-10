@@ -39,21 +39,16 @@ const ViewAnswersModal = ({ quiz, result, onClose }) => {
 
     const getQuestionById = (id) => questions.find(q => q.id === id);
 
+    // --- THIS IS THE FIX ---
     const checkDescriptiveAnswer = (submittedAnswer, keywordsString) => {
         if (!submittedAnswer || !keywordsString) return false;
-        const keywords = keywordsString.split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
+        // Ensure keywordsString is treated as a string before splitting
+        const keywords = String(keywordsString).split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
         const candidateAnswer = submittedAnswer.toLowerCase();
         return keywords.length > 0 && keywords.every(keyword => candidateAnswer.includes(keyword));
     };
 
-    const handleManualScoreChange = (questionId, value) => {
-        const question = getQuestionById(questionId);
-        const maxScore = question.score || 1;
-        const newScore = Math.max(0, Math.min(maxScore, Number(value)));
-        setManualScores(prev => ({...prev, [questionId]: newScore}));
-    };
-
-    const handleSaveManualScore = async (questionId) => {
+    const handleScoreOverride = async (questionId) => {
         setIsUpdating(true);
         try {
             const newOverrides = { ...result.overriddenScores, [questionId]: manualScores[questionId] };
@@ -92,6 +87,13 @@ const ViewAnswersModal = ({ quiz, result, onClose }) => {
             setIsUpdating(false);
         }
     };
+    
+    const handleManualScoreChange = (questionId, value) => {
+        const question = getQuestionById(questionId);
+        const maxScore = question.score || 1;
+        const newScore = Math.max(0, Math.min(maxScore, Number(value)));
+        setManualScores(prev => ({...prev, [questionId]: newScore}));
+    };
 
     return (
         <div className="modal show" style={{ display: 'block' }}>
@@ -108,27 +110,22 @@ const ViewAnswersModal = ({ quiz, result, onClose }) => {
                                 if (!question) return null;
 
                                 const hasOverride = result.overriddenScores && result.overriddenScores.hasOwnProperty(questionId);
-                                const maxScore = question.score || 1;
                                 let isCorrect;
-                                let awardedScore = 0;
-
                                 if (hasOverride) {
-                                    awardedScore = result.overriddenScores[questionId];
-                                    isCorrect = awardedScore > 0;
+                                    isCorrect = result.overriddenScores[questionId] > 0;
                                 } else {
-                                    if (quiz.type === 'Multiple Choice') {
-                                        isCorrect = submittedAnswer === question.correctAnswer;
-                                    } else {
-                                        isCorrect = checkDescriptiveAnswer(submittedAnswer, question.answerParameters);
-                                    }
-                                    if(isCorrect) awardedScore = maxScore;
+                                    isCorrect = quiz.type === 'Multiple Choice'
+                                        ? submittedAnswer === question.correctAnswer
+                                        : checkDescriptiveAnswer(submittedAnswer, question.answerParameters);
                                 }
+                                
+                                const awardedScore = hasOverride ? result.overriddenScores[questionId] : (isCorrect ? (question.score || 1) : 0);
 
                                 return (
-                                    <div key={questionId} className={`mb-4 p-3 border rounded ${isCorrect ? 'border-success' : 'border-danger'}`}>
+                                    <div key={questionId} className={`mb-4 p-3 border rounded ${awardedScore > 0 ? 'border-success' : 'border-danger'}`}>
                                         <div className="d-flex justify-content-between">
                                             <p className="fw-bold multilingual-text" style={{ whiteSpace: 'pre-wrap' }}>{question.questionText}</p>
-                                            <span className="badge bg-info">{maxScore} Point(s)</span>
+                                            <span className="badge bg-info">{question.score || 1} Points</span>
                                         </div>
                                         
                                         {quiz.type === 'Descriptive' ? (
@@ -144,23 +141,25 @@ const ViewAnswersModal = ({ quiz, result, onClose }) => {
                                                         style={{width: '80px'}} 
                                                         value={manualScores[questionId] ?? awardedScore}
                                                         onChange={(e) => handleManualScoreChange(questionId, e.target.value)}
-                                                        max={maxScore}
+                                                        max={question.score || 1}
                                                         min="0"
                                                     />
-                                                    <span>/ {maxScore}</span>
+                                                    <span>/ {question.score || 1}</span>
                                                     <button 
                                                         className="btn btn-sm btn-primary ms-3" 
-                                                        onClick={() => handleSaveManualScore(questionId)}
+                                                        onClick={() => handleScoreOverride(questionId)}
                                                         disabled={isUpdating}
                                                     >
                                                         {isUpdating ? 'Saving...' : 'Save Score'}
                                                     </button>
-                                                    {hasOverride && <span className="ms-2 badge bg-warning text-dark">Manually Graded</span>}
                                                 </div>
                                             </div>
                                         ) : (
-                                            <div>
-                                                <p>Candidate's Answer: <span className={`fw-bold multilingual-text ${isCorrect ? 'text-success' : 'text-danger'}`}>{submittedAnswer}</span></p>
+                                             <div>
+                                                <p>
+                                                    Candidate's Answer: <span className={`fw-bold multilingual-text ${isCorrect ? 'text-success' : 'text-danger'}`}>{submittedAnswer}</span>
+                                                    {isCorrect ? <span className="ms-2 badge bg-success">Correct</span> : <span className="ms-2 badge bg-danger">Incorrect</span>}
+                                                </p>
                                                 {!isCorrect && <p>Correct Answer: <span className="text-success fw-bold multilingual-text">{question.correctAnswer}</span></p>}
                                             </div>
                                         )}
