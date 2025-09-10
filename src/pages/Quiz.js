@@ -140,7 +140,7 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
                     if (currentQuiz.type === 'Multiple Choice') {
                         if (submittedAnswer === q.correctAnswer) isCorrect = true;
                     } else if (currentQuiz.type === 'Descriptive') {
-                        const keywordsString = q.answerParameters || "";
+                        const keywordsString = String(q.answerParameters || ""); // Ensure it's a string
                         const keywords = keywordsString.split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
                         const candidateAnswer = submittedAnswer.toLowerCase();
                         if (keywords.length > 0 && keywords.every(keyword => candidateAnswer.includes(keyword))) isCorrect = true;
