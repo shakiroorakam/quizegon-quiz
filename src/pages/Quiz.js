@@ -3,8 +3,6 @@ import { db } from '../firebase/config';
 import { collection, getDocs, doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import './Quiz.css';
 
-// --- THIS IS THE FIX ---
-// Define the shuffleArray helper function outside the component.
 const shuffleArray = (array) => {
     const shuffled = [...array];
     for (let i = shuffled.length - 1; i > 0; i--) {
@@ -25,12 +23,39 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
     const [error, setError] = useState('');
     const [showSubmitModal, setShowSubmitModal] = useState(false);
 
-    const candidateRef = useRef(candidate);
+    // --- THIS IS THE FIX ---
+    // Use refs for all data that needs to be accessed by async callbacks (like the timer).
+    // This ensures the callbacks always have the latest data, avoiding race conditions.
+    const candidateDataRef = useRef(null);
     const answersRef = useRef(answers);
     const quizRef = useRef(null);
     const questionsRef = useRef(questions);
     const submitQuizRef = useRef();
 
+    // Fetch the latest candidate data on load to ensure we have server-set values like startTime
+    useEffect(() => {
+        const fetchFreshCandidateData = async () => {
+            if (!quizId || !candidate?.id) {
+                setError("Could not verify candidate session.");
+                setLoading(false);
+                return;
+            }
+            try {
+                const candidateDocRef = doc(db, 'quizzes', quizId, 'candidates', candidate.id);
+                const docSnap = await getDoc(candidateDocRef);
+                if (docSnap.exists()) {
+                    candidateDataRef.current = { id: docSnap.id, ...docSnap.data() };
+                } else {
+                    throw new Error("Candidate record not found.");
+                }
+            } catch (err) {
+                 setError("Could not load your session details. Please try refreshing.");
+            }
+        };
+        fetchFreshCandidateData();
+    }, [quizId, candidate]);
+
+    // Keep refs synchronized with the latest state
     useEffect(() => {
         answersRef.current = answers;
         quizRef.current = quiz;
@@ -85,9 +110,10 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
         fetchQuizAndQuestions();
     }, [fetchQuizAndQuestions]);
     
+    // Define the submit function once and keep it in a ref
     useEffect(() => {
         submitQuizRef.current = async () => {
-            const currentCandidate = candidateRef.current;
+            const currentCandidate = candidateDataRef.current; // Use the updated ref
             const currentAnswers = answersRef.current;
             const currentQuiz = quizRef.current;
             const currentQuestions = questionsRef.current;
@@ -269,3 +295,4 @@ const Quiz = ({ quizId, candidate, onQuizComplete }) => {
 };
 
 export default Quiz;
+
