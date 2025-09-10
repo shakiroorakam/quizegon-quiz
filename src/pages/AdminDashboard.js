@@ -104,17 +104,36 @@ const AdminDashboard = () => {
     // Fetch data for the selected quiz
     const fetchQuizData = useCallback((quizId) => {
         if (!quizId) return;
+        
         const candidatesRef = collection(db, 'quizzes', quizId, 'candidates');
         const unsubscribeCandidates = onSnapshot(candidatesRef, (snapshot) => {
             setCandidates(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
         });
+
         const resultsRef = collection(db, 'quizzes', quizId, 'results');
         const unsubscribeResults = onSnapshot(resultsRef, (snapshot) => {
             setResults(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
         });
+
+        // --- THIS IS THE FIX ---
+        // Also check for folders and create them if they don't exist.
+        const foldersRef = collection(db, 'quizzes', quizId, 'folders');
+        const unsubscribeFolders = onSnapshot(foldersRef, async (snapshot) => {
+            if (snapshot.empty) {
+                console.log("No folders found, creating defaults...");
+                const batch = writeBatch(db);
+                const poolFolderRef = doc(db, 'quizzes', quizId, 'folders', 'pool_questions');
+                batch.set(poolFolderRef, { name: 'Pool Questions', createdAt: serverTimestamp() });
+                const fixedFolderRef = doc(db, 'quizzes', quizId, 'folders', 'fixed_questions');
+                batch.set(fixedFolderRef, { name: 'Fixed Questions', createdAt: serverTimestamp() });
+                await batch.commit();
+            }
+        });
+
         return () => {
             unsubscribeCandidates();
             unsubscribeResults();
+            unsubscribeFolders(); // Clean up the folder listener
         };
     }, []);
 
@@ -179,7 +198,10 @@ const AdminDashboard = () => {
     
     const openEditQuizModal = (quiz) => {
         setQuizToEdit({
-            ...quiz,
+            id: quiz.id,
+            name: quiz.name || '',
+            duration: quiz.duration || 15,
+            type: quiz.type || 'Multiple Choice',
             includePoolQuestions: quiz.includePoolQuestions !== false,
             poolQuestionsCount: quiz.poolQuestionsCount || 20,
             fixedQuestionsCount: quiz.fixedQuestionsCount || 10,
